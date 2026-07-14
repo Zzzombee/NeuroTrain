@@ -394,6 +394,7 @@ def build_init_config(
             "prepare_events": False,
             "neuroexplorer_export": True,
             "aligned_rate": True,
+            "time_cluster_permutation": False,
             "export_figures": True,
             "origin_create_templates": False,
             "origin_native_plot": False,
