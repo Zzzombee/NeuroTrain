@@ -1,0 +1,4 @@
+file_id,pl2_file,event_group,has_light,light_on_s,duration_s,light_off_s,condition,note
+animal01_session01,animal01_session01.pl2,baseline,120,15,,Laser 10 mW,first train
+animal01_session01,animal01_session01.pl2,repeat,300,15,,Laser 10 mW,second train
+animal02_session01,animal02_session01.pl2,baseline,90,10,100,LED blue,light_off explicitly provided

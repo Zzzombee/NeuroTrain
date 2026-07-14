@@ -1,0 +1,4 @@
+version: 1
+display_name: NeuroExplorer PSTH PPTX
+short_description: Plexon to NeuroExplorer to plotting to PPTX workflow
+default_prompt: Automate a Plexon/NeuroExplorer/Origin/PPTX electrophysiology workflow for PSTH and firing-rate reporting.
