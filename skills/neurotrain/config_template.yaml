@@ -1,0 +1,274 @@
+analysis:
+  mode: "auto"
+
+init_project:
+  raw_pl2_policy:
+    auto_move_from_project_root: false
+    auto_copy_from_project_root: false
+    detect_root_pl2: true
+    root_pl2_glob: "sorted_*.pl2"
+    on_root_pl2_found: "warn_only"
+    max_files_to_list_in_console: 5
+    write_full_file_list_to_log: true
+
+project:
+  root_dir: "E:/example/project"
+  file_id_column: "file_id"
+
+input:
+  pl2_dir: "00_raw_pl2"
+  stim_schedule: "02_stim_events/stim_schedule_master.xlsx"
+  unit_quality_table: "01_sorting_info/unit_quality_table.xlsx"
+
+stim_schedule:
+  auto_build_from_filenames: true
+  update_existing: true
+  preserve_manual_edits: true
+  output_path: "02_stim_events/stim_schedule_master.xlsx"
+  source:
+    pl2_dir: "00_raw_pl2"
+    file_glob: "*.pl2"
+  filename_parser:
+    enabled: true
+    pattern_name: "sorted_index_light_channels_or_no_light"
+    regex: "^sorted_(?P<file_index>\\d+)_(?P<light_on>\\d+(?:\\.\\d+)?)light(?P<duration>\\d+(?:\\.\\d+)?)_(?P<channels>[0-9,]+)\\.pl2$"
+    no_light_regex: "^sorted_(?P<file_index>\\d+)_nolight_(?P<channels>[0-9,]+)\\.pl2$"
+    case_sensitive: false
+  file_id:
+    format: "{file_index}"
+    zero_pad: 2
+  defaults:
+    condition: ""
+    note_prefix: "sorted channels: "
+  conflict_policy:
+    existing_row_key: "pl2_file"
+    on_parse_fail: "warn_skip"
+    on_existing_manual_edit: "preserve"
+
+unit_table:
+  enabled: true
+  auto_build_if_missing: true
+  update_existing: true
+  preserve_manual_edits: true
+  output_path: "01_sorting_info/unit_quality_table.xlsx"
+  source:
+    backend: "nex"
+    use_active_doc: false
+    open_pl2: true
+    fallback_to_existing_fullrate_exports: true
+  unit_detection:
+    variable_kind: "NeuronNames"
+    include_patterns:
+      - "SPK"
+      - "SPKC"
+    exclude_patterns:
+      - "Unsorted"
+      - "Noise"
+      - "INVALID"
+    case_sensitive: false
+  numbering:
+    unit_id_format: "unit{index:02d}"
+    per_file_reset: true
+    sort_by_channel_then_suffix: true
+  default_values:
+    include: "yes"
+    exclusion_reason: ""
+    duplicate_of: ""
+    representative_unit: ""
+    note: ""
+
+neuroexplorer:
+  enabled: true
+  backend: "nex_package"
+  use_existing_csv_if_available: true
+  stop_if_export_failed: false
+  export_fullrate: true
+  nex_package:
+    require_active_neuroexplorer: true
+    enable_external_python_required: true
+    smoke_test: true
+    introspect_api: true
+    fail_to_manual_csv: true
+  files:
+    open_pl2_mode: "try_nex_then_manual"
+    save_intermediate_nex5: false
+  templates:
+    fullrate_template_name: "RateHist_FullSession"
+    auto_modify_template: true
+    parameter_names:
+      fullrate_bin:
+        - "Bin (sec)"
+        - "Bin"
+      fullrate_units:
+        - "Histogram Units"
+        - "Units"
+  fullrate:
+    enabled: true
+    template_name: "RateHist_FullSession"
+    bin_width_s: 1
+    histogram_unit: "Spikes per second"
+    x_min_s: 0
+    x_max_s: null
+    save_num_results: true
+    skip_if_template_missing: false
+  export:
+    output_fullrate_dir: "03_nex_exports/fullrate"
+    output_aligned_rate_dir: "03_nex_exports/aligned_rate"
+    expected_fullrate_pattern: "{file_id}_FullRate_bin{bin_width_s}s.csv"
+
+aligned_rate:
+  enabled: true
+  pre_window_s:
+    - -60
+    - 0
+  light_window_s:
+    - 5
+    - 20
+  post_window_s:
+    - 25
+    - 85
+  align_to: "light_on_s"
+  bin_width_s: 1
+  multi_trial_aggregation: "mean"
+  variable_duration_policy: "keep_trials"
+  require_light_on_on_bin_boundary: false
+  off_boundary_policy: "nearest"
+
+plotting:
+  aligned_light_band_start_s: 0
+  aligned_light_band_end_mode: "duration_s"
+  psth_like_from_fullrate: true
+
+origin:
+  enabled: true
+  backend: "matplotlib_png"  # matplotlib_png | origin_native | both
+  use_com: true
+  use_originpro: true
+  fallback_matplotlib: true
+  save_opju: false
+  export_images: false
+  opju_mode: "per_file"
+  max_graph_pages_per_opju: 80
+  opju_generation_mode: "archive_existing_pngs"
+  opju_output_dir: "04_origin_projects/opju_outputs"
+  opju_filename: "{project_name}_fullrate_aligned.opju"
+  overwrite_opju: true
+  require_opju_success: false
+  close_origin_after_save: false
+  native:
+    use_originpro: true
+    manifest_path: "04_origin_projects/origin_input/origin_plot_manifest.xlsx"
+    opju_output_dir: "04_origin_projects/opju_outputs"
+    image_output_dir: "05_exported_figures_origin"
+    image_format: "png"
+    dpi: 300
+    templates:
+      fullrate: "04_origin_projects/templates/FullRate_template.otpu"
+      aligned_rate: "04_origin_projects/templates/AlignedRate_template.otpu"
+      prepost_summary: "04_origin_projects/templates/PreLightPost_template.otpu"
+      summary: "04_origin_projects/templates/Summary_template.otpu"
+    template_creation:
+      enabled: false
+      seed_opju_path: "04_origin_projects/template_seed/origin_template_seed.opju"
+      auto_save_otpu: true
+      fail_if_otpu_save_failed: false
+      overwrite_templates: true
+      templates:
+        fullrate: "04_origin_projects/templates/FullRate_template.otpu"
+        aligned_rate: "04_origin_projects/templates/AlignedRate_template.otpu"
+        prepost_summary: "04_origin_projects/templates/PreLightPost_template.otpu"
+      style:
+        line_color: "#1F77B4"
+        line_width_pt: 1.8
+        light_band_color: "#B7C9E8"
+        light_band_transparency: 70
+        baseline_bar_color: "#9BA7B0"
+        light_bar_color: "#F3C969"
+        post_bar_color: "#8BC6A2"
+        grid_color: "#B0B0B0"
+        grid_transparency: 75
+        title_font_size: 24
+        axis_title_font_size: 20
+        tick_font_size: 16
+    graph_pages:
+      fullrate: true
+      aligned_rate: true
+      prepost_summary: true
+      summary: true
+  project_content:
+    include_stim_schedule: true
+    include_unit_quality_table: true
+    include_fullrate_data: true
+    include_aligned_rate_data: true
+    include_prepost_summary_data: true
+    include_graph_pages: true
+  graph_pages:
+    fullrate: true
+    aligned_rate: true
+    prepost_summary: true
+    summary: true
+  template_fullrate: "04_origin_projects/templates/FullRate_template.otpu"
+  export_format: "png"
+  dpi: 300
+  light_band_color: "#B7C9E8"
+  light_band_alpha: 0.30
+  plot_style: "step_line"
+
+pptx:
+  enabled: true
+  output_file: "06_pptx/PSTH_summary_auto.pptx"
+  layout: "one_unit_per_slide"
+  slide_width_in: 13.333
+  slide_height_in: 7.5
+  include_metadata: true
+  include_qc_notes: true
+
+statistics:
+  enabled: true
+  output_dir: "07_statistics"
+  prelightpost:
+    enabled: true
+    input_dir: "03_nex_exports/aligned_rate"
+    input_pattern: "*_PreLightPostSummary.csv"
+    include_only_unit_quality_include_yes: true
+    duplicate_policy: "keep_all"
+    include_trial_rows: true
+    include_aggregated_rows: true
+    preferred_aggregation: "trial"
+    output_wide_csv: "all_units_pre_light_post_wide.csv"
+    output_wide_qc_csv: "all_units_pre_light_post_wide_qc.csv"
+    output_qc_excluded_csv: "all_units_pre_light_post_qc_excluded.csv"
+    output_excel: "all_units_pre_light_post_statistics.xlsx"
+    output_long_csv: null
+    activity_filter:
+      enabled: true
+      min_max_window_hz: 0.5
+      min_total_expected_spikes: 10
+      clean_table_suffix: "_qc"
+    compute_derived_metrics: true
+    fail_on_missing_light_summary: false
+
+run:
+  overwrite: true
+  dry_run: false
+  stop_on_error: false
+  clean_outputs_before_run: false
+  clean_fullrate: false
+  modules:
+    validate: true
+    build_stim_schedule: true
+    prepare_events: false
+    build_unit_table: true
+    neuroexplorer_export: true
+    aligned_rate: true
+    prelightpost_stats: false
+    export_figures: true
+    origin_create_templates: false
+    origin_native_plot: false
+    origin_plot: false
+    build_pptx: true
+
+maintenance:
+  canonicalize_file_ids: true
+  remove_noncanonical_file_id_rows: true
+  backup_tables_before_canonicalize: true

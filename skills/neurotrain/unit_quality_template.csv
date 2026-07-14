@@ -1,0 +1,4 @@
+file_id,unit_id,channel,original_name,include,exclusion_reason,representative_unit,duplicate_of,note
+animal01_session01,unit01,SPKC04,SPK_SPKC04a,yes,,,,"clean single unit"
+animal01_session01,unit02,SPKC05,SPK_SPKC05a,no,duplicate across channels,unit01,unit01,"exclude from statistics"
+animal02_session01,unit01,SPKC07,SPK_SPKC07a,true,,,,"included"

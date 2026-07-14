@@ -1,0 +1,28 @@
+project/
+├─ 00_raw_pl2/
+│  ├─ animal01_session01.pl2
+│  └─ animal02_session01.pl2
+├─ 01_sorting_info/
+│  ├─ unit_quality_table.xlsx
+│  └─ duplicate_unit_table.xlsx
+├─ 02_stim_events/
+│  ├─ stim_schedule_master.xlsx
+│  └─ exported_events/
+├─ 03_nex_exports/
+│  ├─ psth/
+│  ├─ fullrate/
+│  └─ raster/
+├─ 04_origin_projects/
+│  ├─ templates/
+│  └─ opju_outputs/
+├─ 05_exported_figures/
+│  ├─ psth/
+│  ├─ fullrate/
+│  └─ summary/
+├─ 06_pptx/
+│  ├─ PSTH_summary_auto.pptx
+│  └─ PSTH_summary_checked.pptx
+└─ 99_logs/
+   ├─ processing_log.xlsx
+   ├─ error_log.xlsx
+   └─ parameter_record.yaml

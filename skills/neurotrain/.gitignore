@@ -1,0 +1,37 @@
+# Runtime data and project outputs
+00_raw_pl2/
+03_nex_exports/
+04_origin_projects/
+05_exported_figures/
+06_pptx/
+07_statistics/
+99_logs/
+99_archive/
+
+# Large/proprietary scientific data and generated artifacts
+*.pl2
+*.nex
+*.nex5
+*.opju
+*.pptx
+
+# Python cache/build output
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+build/
+dist/
+*.egg-info/
+
+# Local editor/environment files
+.env
+.venv/
+venv/
+.vscode/
+
+# Keep source templates trackable
+!templates/
+!templates/**
+!tests/fixtures/
+!tests/fixtures/**
