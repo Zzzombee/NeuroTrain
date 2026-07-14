@@ -527,6 +527,86 @@ Behavior:
 - `05_exported_figures/summary/{file_id}_Summary_pre60_post85.png`
 - `06_pptx/PSTH_summary_auto.pptx`
 
+## Unit-level temporal cluster permutation
+
+This opt-in branch reads the existing reconstructed
+`03_nex_exports/aligned_rate/*_LightAlignedRate_*.csv` files. It does not
+re-read `.pl2`, call NeuroExplorer, or change the normal figures/PPTX flow.
+Repeated aligned trials are averaged within each `(file_id, unit_id, time)` so
+that one independent unit/channel contributes exactly one sample row.
+
+Enable and configure it in the existing YAML config (all times are seconds):
+
+```yaml
+time_cluster_permutation:
+  enabled: true
+  analysis_window_s: [-60, 85]
+  baseline_window_s: [-60, 0]
+  test_window_s: [5, 20]
+  cluster_forming_alpha: 0.05
+  cluster_alpha: 0.05
+  n_permutations: 10000
+  tail: 0
+  seed: 20260714
+  output_subdir: "time_cluster_permutation"
+  include_in_pptx: false
+```
+
+If the baseline or test window is omitted, it is inherited through the same
+config loader from `aligned_rate.pre_window_s` or
+`aligned_rate.light_window_s`. Windows are half-open for bin selection:
+`start_s <= time_s < end_s`. Invalid, overlapping, empty, or out-of-range
+windows fail with a readable error.
+
+Units with no valid baseline bins or too few configured test bins are excluded
+with a reason in `unit_summary.csv`; partial missing values remain aligned on
+the shared time grid and are handled per bin. Constant traces are retained as
+valid no-change samples. A bin with fewer than two valid units or nonzero mean
+but zero cross-unit variance has an undefined t statistic (`NaN`); an all-zero
+delta bin is reported as `t=0, p=1`. Shifted or irregular unit time grids are
+rejected instead of silently concatenated.
+
+Run only this analysis after `aligned_rate` outputs exist:
+
+```powershell
+python run_pipeline.py --config config.yaml --module time_cluster_permutation
+# equivalent standalone wrapper
+python time_cluster_permutation.py --config config.yaml
+```
+
+The test statistic is the across-unit one-sample t statistic of each unit's
+baseline-subtracted firing rate. A permutation flips one sign for the unit's
+entire test-window trace, preserving temporal correlation. Positive and
+negative threshold crossings form separate contiguous clusters; cluster mass
+is the sum of absolute t values, and the null uses the maximum cluster mass per
+sign flip. Small two-sided problems use exact complementary-pair-reduced sign
+enumeration; larger problems use seeded Monte Carlo permutations. Cluster p
+values use the `(1 + exceedances) / (1 + permutations)` correction; the
+unflipped observed assignment is the added class rather than a duplicated null
+draw.
+
+Outputs are isolated under
+`07_statistics/time_cluster_permutation/` (or the configured subdirectory):
+
+- `cluster_table.csv`
+- `time_bin_statistics.csv`
+- `unit_time_analysis_matrix.csv`
+- `unit_summary.csv`
+- `null_max_cluster_mass.csv`
+- `analysis_metadata.json`
+- `figures/unit_time_delta_rate_heatmap.<format>`
+- `figures/population_mean_delta_rate.<format>`
+- `figures/temporal_t_statistic.<format>`
+
+The population curve uncertainty is unit-level SEM. This analysis assumes
+units are exchangeable and independent. Dependence among units from the same
+animal or session is not modeled, so the result is not automatically an
+animal-level population inference. Cluster-level significance also does not
+mean that every time bin is independently significant, and cluster boundaries
+must not be interpreted as exact physiological onset times. The present PPTX
+generator has no isolated plugin interface, so these figures remain standalone
+and `include_in_pptx` should remain `false`.
+
 ## PreLightPost statistics QC
 
 Run only the statistics module after aligned-rate CSVs already exist:

@@ -16,6 +16,7 @@ from scripts.origin_native.create_origin_templates import create_origin_template
 from scripts.origin_native_plot import origin_native_plot
 from scripts.plot_in_origin import plot_in_origin
 from scripts.prepare_events import prepare_events
+from scripts.time_cluster_permutation import run_time_cluster_permutation
 from utils.logging_utils import PipelineLogger
 from utils.path_utils import apply_runtime_overrides, load_yaml, resolve_project_paths, save_yaml
 from scripts.validate_project import validate_project
@@ -29,6 +30,7 @@ MODULE_RUNNERS: dict[str, Callable] = {
     "build_unit_table": build_unit_quality_table,
     "neuroexplorer_export": export_from_neuroexplorer,
     "aligned_rate": build_aligned_rate_from_fullrate,
+    "time_cluster_permutation": run_time_cluster_permutation,
     "prelightpost_stats": build_prelightpost_statistics,
     "export_figures": plot_in_origin,
     "python_plot": plot_in_origin,
@@ -202,6 +204,7 @@ def main() -> int:
                 "prepare_events",
                 "neuroexplorer_export",
                 "aligned_rate",
+                "time_cluster_permutation",
                 "prelightpost_stats",
                 "export_figures",
                 "origin_create_templates",

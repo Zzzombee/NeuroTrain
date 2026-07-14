@@ -69,6 +69,7 @@ The older direct NeuroExplorer PSTH route is experimental fallback only.
 - Summary figure generation: `export_figures.py`
 - PPTX build: `build_pptx.py`
 - Pre/light/post statistics export: `scripts/build_prelightpost_statistics.py`
+- Unit-level temporal cluster permutation: `scripts/time_cluster_permutation.py`
 - Command reference: `HELP.md`
 - Detailed usage: `docs/usage.md`
 
@@ -102,6 +103,7 @@ python run_pipeline.py --config config.yaml --module validate
 python run_pipeline.py --config config.yaml --module prepare_events
 python run_pipeline.py --config config.yaml --module neuroexplorer_export
 python run_pipeline.py --config config.yaml --module aligned_rate
+python run_pipeline.py --config config.yaml --module time_cluster_permutation
 python run_pipeline.py --config config.yaml --module export_figures
 python run_pipeline.py --config config.yaml --module origin_create_templates
 python run_pipeline.py --config config.yaml --module origin_native_plot
@@ -139,6 +141,8 @@ python run_pipeline.py --config config.yaml --module prelightpost_stats
 - `summary_by_file` and `summary_by_condition` CSV outputs are no longer generated.
 - `include == yes/true/1` units only.
 - Duplicates must be excluded from counting and PPT inclusion.
+- `time_cluster_permutation` is opt-in and reads existing `LightAlignedRate` CSVs; one `(file_id, unit_id)` is one exchange unit after within-unit trial averaging.
+- Temporal cluster results are unit-level inferences. They do not model within-animal/session dependence, make each bin independently significant, or define exact physiological onset boundaries.
 
 ## NeuroExplorer / Origin Policy
 

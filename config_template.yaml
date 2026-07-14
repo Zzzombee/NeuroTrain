@@ -134,6 +134,32 @@ aligned_rate:
   require_light_on_on_bin_boundary: false
   off_boundary_policy: "nearest"
 
+time_cluster_permutation:
+  enabled: false
+  input_pattern: "*_LightAlignedRate_*.csv"
+  analysis_window_s:
+    - -60
+    - 85
+  baseline_window_s:
+    - -60
+    - 0
+  test_window_s:
+    - 5
+    - 20
+  cluster_forming_alpha: 0.05
+  cluster_alpha: 0.05
+  n_permutations: 10000
+  max_exact_permutations: 65536
+  tail: 0
+  statistic: "one_sample_t"
+  seed: 20260714
+  min_valid_bins_per_unit: null
+  include_only_unit_quality_include_yes: true
+  duplicate_policy: "exclude_duplicates"
+  output_subdir: "time_cluster_permutation"
+  figure_format: null
+  include_in_pptx: false
+
 plotting:
   aligned_light_band_start_s: 0
   aligned_light_band_end_mode: "duration_s"
@@ -261,6 +287,7 @@ run:
     build_unit_table: true
     neuroexplorer_export: true
     aligned_rate: true
+    time_cluster_permutation: false
     prelightpost_stats: false
     export_figures: true
     origin_create_templates: false
