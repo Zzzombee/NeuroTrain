@@ -510,6 +510,7 @@ def render_raster(
         ax.axvspan(interval[0], interval[1], color=plot_cfg.get("stimulus_band_color", "#B7C9E8"), alpha=float(plot_cfg.get("stimulus_band_alpha", 0.25)))
     ax.set_xlim(start, end)
     ax.set_ylim(0.5, max(trial_indices, default=1) + 0.5)
+    ax.set_yticks(trial_indices)
     ax.invert_yaxis()
     ax.set_xlabel(plot_cfg.get("x_label", "Time from event (s)"))
     ax.set_ylabel(plot_cfg.get("y_label", "Trial"))

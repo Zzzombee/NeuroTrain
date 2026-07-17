@@ -265,6 +265,7 @@ class RasterPipelineTests(unittest.TestCase):
                 render_raster(unit_aligned, unit_trials, config, preview)
                 figure = plt.figure(plt.get_fignums()[-1])
                 self.assertEqual(figure.axes[0].get_xlim(), (-1.0, 1.0))
+                self.assertEqual(figure.axes[0].get_yticks().tolist(), unit_trials["trial_index"].tolist())
                 self.assertEqual(len(figure.axes[0].collections), len(unit_trials))
             plt.close("all")
 
