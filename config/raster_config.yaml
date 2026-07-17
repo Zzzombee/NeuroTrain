@@ -1,0 +1,67 @@
+schema_version: 1
+
+paths:
+  input_root: "../examples/raster_input"
+  output_root: "../examples/raster_output"
+  spike_table_glob: "**/*unit_train*.csv"
+  event_table_glob: "**/*events*.csv"
+  output_subdir: "raster"
+
+input:
+  format: "neuroexplorer_long_csv"
+  delimiter: null
+  encoding: "utf-8-sig"
+  time_unit: "seconds"
+  columns:
+    session_id: "session_id"
+    unit_id: "unit_id"
+    channel_id: "channel_id"
+    spike_time: "timestamp"
+    event_name: "event_name"
+    event_time: "timestamp"
+    trial_id: null
+
+alignment:
+  event_name: "Light_On"
+  window_s: [-120.0, 360.0]
+  boundary: "left_closed_right_open"
+  trial_order: "event_time"
+  minimum_inter_event_interval_s: null
+  overlapping_windows: "allow"
+  missing_event: "error"
+  light_off_event_name: null
+  fixed_stimulus_duration_s: null
+
+trial_filter:
+  first_trial: null
+  last_trial: null
+  include_trial_ids: null
+  exclude_trial_ids: []
+
+plot:
+  formats: ["png"]
+  dpi: 300
+  figsize_inches: [10.0, 6.0]
+  spike_color: "black"
+  spike_linewidth: 0.6
+  spike_height_fraction: 0.8
+  alignment_line_color: "red"
+  alignment_linewidth: 1.0
+  show_alignment_line: true
+  title_template: "{session_id} | {unit_id} | aligned to {event_name}"
+  x_label: "Time from event (s)"
+  y_label: "Trial"
+  transparent_background: false
+
+output:
+  write_trial_summary_csv: true
+  write_unit_summary_csv: true
+  write_exclusion_csv: true
+  write_aligned_spikes_long_csv: false
+  write_manifest_json: true
+  overwrite: false
+
+runtime:
+  fail_on_empty_unit: false
+  continue_on_unit_error: true
+  log_level: "INFO"

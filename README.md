@@ -13,6 +13,19 @@ NeuroTrain 是一套事件对齐的脉冲序列分析工作流，用于处理全
 -> PPTX
 ```
 
+## 独立原始脉冲 Raster 分支
+
+Raster 分支读取每个 unit 的原始 spike timestamps，并用独立 Event 表中的事件 occurrence 构造 trial；它不从 rate histogram 反推 spike，也不属于 PSTH、统计检验或 PPTX 流程。入口与配置均独立于主 `config.yaml`：
+
+```powershell
+python raster_plot.py --config config/raster_config.yaml --validate-only
+python raster_plot.py --config config/raster_config.yaml
+```
+
+运行前必须按实际 NeuroExplorer 导出修改 `config/raster_config.yaml` 的输入/输出路径、glob、字段映射、时间单位、对齐事件和窗口。当前确定支持 long CSV：spike 表每行一个 spike，Event 表每行一个事件；同一 `session_id + unit_id` 是 unit 主键。默认窗口为左闭右开 `[start, end)`，重叠 trial 窗口允许同一绝对 spike 进入多个 trial 并在 QC 中标记，trial 1 显示在图顶部，无 spike 的合法 trial 保留为空行。
+
+结果只写入 `<output_root>/raster/`，包括每个 `session × unit` 的图、`unit_summary.csv`、`trial_summary.csv`、`exclusions.csv`、`manifest.json` 和 `raster.log`。完整输入契约、配置示例、异常处理和真实数据验收步骤见 [docs/raster_plots.md](docs/raster_plots.md)。仓库目前没有经过真实 NeuroExplorer Unit Train/Event 文件验证的稳定 Macro；Python 端契约和处理链已自动测试，投入生产前仍需按文档人工核对一次真实导出。
+
 ## 开发源目录
 
 本技能只在工作区根目录中维护。用户级 Codex `neurotrain` 技能目录应是指向本项目目录的 Windows junction，不应维护另一份独立副本。今后的代码、测试、配置模板和文档修改均应在工作区根目录完成，以保证项目源码与 Codex 技能始终同步。

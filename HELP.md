@@ -281,3 +281,15 @@ OPJU 默认关闭，只是可选归档。PPTX 读取 `05_exported_figures/` 的 
 ```powershell
 python run_pipeline.py --config config.yaml --module neuroexplorer_export
 ```
+
+## 18. 独立原始脉冲 Raster
+
+Raster 不由 `run_pipeline.py` 自动触发，也不读取主 `config.yaml`。先从 NeuroExplorer 导出包含 `session_id`、`unit_id`、可选 `channel_id` 和 spike `timestamp` 的 long CSV，再单独导出包含 `session_id`、`event_name` 和 event `timestamp` 的 Event CSV。两类时间戳必须使用 `config/raster_config.yaml` 声明的同一原始单位。
+
+```powershell
+python raster_plot.py --config config/raster_config.yaml --validate-only
+python raster_plot.py --config config/raster_config.yaml
+python raster_plot.py --config config/raster_config.yaml --session session-A --unit unit-1
+```
+
+找不到输入、字段缺失、时间单位非法、缺少指定事件、禁止的窗口重叠或 `overwrite: false` 冲突时，命令以非零状态结束。`fail_on_empty_unit: false` 默认为空 unit 输出保留所有 trial 的空图；设为 `true` 时写入 exclusions。完整说明与真实 NeuroExplorer 人工验收清单见 `docs/raster_plots.md`。
