@@ -77,6 +77,12 @@ unit_table:
     representative_unit: ""
     note: ""
 
+unit_selection:
+  required: true
+  include_value: "yes"
+  fail_on_unmatched_data_units: true
+  duplicate_policy: "keep_all"
+
 neuroexplorer:
   enabled: true
   backend: "nex_package"
@@ -131,21 +137,34 @@ aligned_rate:
   bin_width_s: 1
   multi_trial_aggregation: "mean"
   variable_duration_policy: "keep_trials"
+
+time_cluster_aligned_rate:
+  # Independent from aligned_rate/PreLightPost; writes boundary-aligned inputs only.
+  enabled: true
+  output_dir: "03_nex_exports/time_cluster_aligned_rate"
+  window_s:
+    - -90
+    - 300
+  source_bin_width_s: null  # null inherits neuroexplorer.fullrate.bin_width_s
+  bin_width_s: 30  # target width; null inherits source_bin_width_s
+  incomplete_target_bin_policy: "error"  # error | nan
   require_light_on_on_bin_boundary: false
   off_boundary_policy: "nearest"
 
 time_cluster_permutation:
+  # Reads only dedicated TimeClusterAlignedRate CSVs; no fallback to LightAlignedRate.
   enabled: false
-  input_pattern: "*_LightAlignedRate_*.csv"
+  input_dir: "03_nex_exports/time_cluster_aligned_rate"
+  input_pattern: "*_TimeClusterAlignedRate_*.csv"
   analysis_window_s:
-    - -60
-    - 85
+    - -90
+    - 300
   baseline_window_s:
-    - -60
+    - -90
     - 0
   test_window_s:
-    - 5
-    - 20
+    - 0
+    - 300
   cluster_forming_alpha: 0.05
   cluster_alpha: 0.05
   n_permutations: 10000
@@ -287,6 +306,7 @@ run:
     build_unit_table: true
     neuroexplorer_export: true
     aligned_rate: true
+    time_cluster_aligned_rate: false
     time_cluster_permutation: false
     prelightpost_stats: false
     export_figures: true

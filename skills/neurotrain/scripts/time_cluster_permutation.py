@@ -19,6 +19,7 @@ import pandas as pd
 from utils.logging_utils import PipelineLogger
 from utils.path_utils import load_yaml, resolve_path, resolve_project_paths
 from utils.table_utils import normalize_include_column, read_table, write_table
+from utils.unit_selection import select_unit_cohort, write_cohort_metadata
 
 
 CLUSTER_COLUMNS = [
@@ -40,10 +41,11 @@ CLUSTER_COLUMNS = [
 
 DEFAULTS = {
     "enabled": False,
-    "input_pattern": "*_LightAlignedRate_*.csv",
+    "input_dir": "03_nex_exports/time_cluster_aligned_rate",
+    "input_pattern": "*_TimeClusterAlignedRate_*.csv",
     "analysis_window_s": None,
-    "baseline_window_s": None,
-    "test_window_s": None,
+    "baseline_window_s": [-60.0, 0.0],
+    "test_window_s": [0.0, 300.0],
     "cluster_forming_alpha": 0.05,
     "cluster_alpha": 0.05,
     "n_permutations": 10000,
@@ -63,6 +65,7 @@ DEFAULTS = {
 @dataclass
 class PreparedAnalysis:
     time_s: np.ndarray
+    bin_width_s: float
     raw_rate_hz: np.ndarray
     delta_rate_hz: np.ndarray
     included_units: pd.DataFrame
@@ -372,34 +375,34 @@ def _window_pair(value, name: str) -> tuple[float, float]:
     return start, end
 
 
-def _validate_and_resolve_windows(config: dict, cfg: dict, available_time: np.ndarray) -> tuple[tuple[float, float], tuple[float, float], tuple[float, float]]:
+def _validate_and_resolve_windows(
+    config: dict,
+    cfg: dict,
+    available_time: np.ndarray,
+    bin_width_s: float,
+) -> tuple[tuple[float, float], tuple[float, float], tuple[float, float]]:
     if len(available_time) < 2:
         raise ValueError("Aligned input must contain at least two distinct time bins.")
-    aligned_cfg = config.get("aligned_rate", config.get("neuroexplorer", {}).get("aligned_rate", {}))
     baseline_value = cfg.get("baseline_window_s")
     test_value = cfg.get("test_window_s")
     if baseline_value is None:
-        baseline_value = aligned_cfg.get("pre_window_s")
+        raise ValueError("time_cluster_permutation.baseline_window_s is required.")
     if test_value is None:
-        test_value = aligned_cfg.get("light_window_s")
-    if baseline_value is None:
-        raise ValueError("time_cluster_permutation.baseline_window_s is missing and aligned_rate.pre_window_s is unavailable.")
-    if test_value is None:
-        raise ValueError("time_cluster_permutation.test_window_s is missing and aligned_rate.light_window_s is unavailable.")
+        raise ValueError("time_cluster_permutation.test_window_s is required.")
     baseline = _window_pair(baseline_value, "time_cluster_permutation.baseline_window_s")
     test = _window_pair(test_value, "time_cluster_permutation.test_window_s")
     if max(baseline[0], test[0]) < min(baseline[1], test[1]):
         raise ValueError("Baseline and test windows must not overlap.")
     analysis_value = cfg.get("analysis_window_s")
-    analysis = (float(available_time[0]), float(available_time[-1])) if analysis_value is None else _window_pair(
+    available_start = float(available_time[0] - bin_width_s / 2.0)
+    available_end = float(available_time[-1] + bin_width_s / 2.0)
+    analysis = (available_start, available_end) if analysis_value is None else _window_pair(
         analysis_value, "time_cluster_permutation.analysis_window_s"
     )
-    tolerance = max(1.0e-9, float(np.median(np.diff(available_time))) * 1.0e-6)
-    available_start = float(available_time[0])
-    available_end = float(available_time[-1])
+    tolerance = max(1.0e-9, abs(bin_width_s) * 1.0e-6)
     if analysis[0] < available_start - tolerance or analysis[1] > available_end + tolerance:
         raise ValueError(
-            f"Analysis window {analysis} s exceeds aligned recording range [{available_start}, {available_end}] s."
+            f"Analysis window {analysis} s exceeds aligned bin-edge range [{available_start}, {available_end}] s."
         )
     for name, window in (("baseline", baseline), ("test", test)):
         if window[0] < analysis[0] - tolerance or window[1] > analysis[1] + tolerance:
@@ -426,7 +429,7 @@ def _load_unit_metadata(config: dict, paths: dict) -> pd.DataFrame:
 
 def discover_aligned_rate_inputs(config: dict, paths: dict, cfg: dict) -> list[Path]:
     input_dir_raw = cfg.get("input_dir")
-    input_dir = resolve_path(paths["root_dir"], input_dir_raw) if input_dir_raw else paths["nex_aligned_rate_dir"]
+    input_dir = resolve_path(paths["root_dir"], input_dir_raw) if input_dir_raw else paths["time_cluster_aligned_rate_dir"]
     pattern = str(cfg.get("input_pattern", DEFAULTS["input_pattern"]))
     candidates = [
         path
@@ -434,7 +437,7 @@ def discover_aligned_rate_inputs(config: dict, paths: dict, cfg: dict) -> list[P
         if path.is_file() and "no_light_skipped" not in path.name and "PreLightPostSummary" not in path.name
     ]
     if not candidates:
-        raise FileNotFoundError(f"No reconstructed light-aligned rate CSV files matched {input_dir / pattern}.")
+        raise FileNotFoundError(f"No dedicated time-cluster aligned-rate CSV files matched {input_dir / pattern}.")
     return candidates
 
 
@@ -443,16 +446,41 @@ def load_aligned_rate_inputs(paths: list[Path]) -> pd.DataFrame:
     file_to_sources: dict[str, set[str]] = {}
     for path in paths:
         frame = read_table(path).copy()
-        required = {"unit_id", "aligned_time_s", "firing_rate_hz"}
+        required = {
+            "unit_id",
+            "aligned_bin_start_s",
+            "aligned_bin_end_s",
+            "aligned_time_s",
+            "firing_rate_hz",
+            "alignment_boundary_s",
+            "alignment_offset_s",
+            "stimulus_time_aligned_s",
+            "alignment_method",
+        }
         missing = required - set(frame.columns)
         if missing:
             raise ValueError(f"Aligned rate file {path} is missing required columns: {sorted(missing)}")
         if "file_id" not in frame.columns:
-            frame["file_id"] = path.name.split("_LightAlignedRate_", 1)[0]
+            frame["file_id"] = path.name.split("_TimeClusterAlignedRate_", 1)[0]
         frame["file_id"] = frame["file_id"].astype(str)
         frame["unit_id"] = frame["unit_id"].astype(str)
-        frame["aligned_time_s"] = pd.to_numeric(frame["aligned_time_s"], errors="coerce")
+        for column in ["aligned_bin_start_s", "aligned_bin_end_s", "aligned_time_s"]:
+            frame[column] = pd.to_numeric(frame[column], errors="coerce")
         frame["firing_rate_hz"] = pd.to_numeric(frame["firing_rate_hz"], errors="coerce")
+        valid_intervals = frame.dropna(subset=["aligned_bin_start_s", "aligned_bin_end_s", "aligned_time_s"])
+        if valid_intervals.empty:
+            raise ValueError(f"Aligned rate file {path} contains no valid aligned bin intervals.")
+        starts = valid_intervals["aligned_bin_start_s"].to_numpy(dtype=float)
+        ends = valid_intervals["aligned_bin_end_s"].to_numpy(dtype=float)
+        centers = valid_intervals["aligned_time_s"].to_numpy(dtype=float)
+        widths = ends - starts
+        tolerance = max(1.0e-9, float(np.nanmedian(np.abs(widths))) * 1.0e-6)
+        if np.any(widths <= 0) or not np.allclose(centers, (starts + ends) / 2.0, rtol=1.0e-6, atol=tolerance):
+            raise ValueError(f"Aligned rate file {path} has inconsistent bin start/end/center values.")
+        if np.any((starts < -tolerance) & (ends > tolerance)):
+            raise ValueError(f"Aligned rate file {path} contains a bin that crosses 0 s; rebuild it from fullrate intervals.")
+        if np.any(np.isclose(centers, 0.0, rtol=0.0, atol=tolerance)):
+            raise ValueError(f"Aligned rate file {path} still uses 0 s as a bin center; rebuild it with 0 s as a boundary.")
         frame["source_aligned_file"] = str(path)
         for file_id in frame["file_id"].dropna().unique():
             file_to_sources.setdefault(str(file_id), set()).add(str(path))
@@ -544,8 +572,10 @@ def prepare_analysis_matrix(config: dict, aligned: pd.DataFrame, unit_metadata: 
     median_step = float(np.median(differences))
     if not np.allclose(differences, median_step, rtol=1.0e-6, atol=max(1.0e-9, abs(median_step) * 1.0e-6)):
         raise ValueError("Aligned unit time axes do not share a common regular grid; shifted or inconsistent bins were detected.")
-    aligned_cfg = config.get("aligned_rate", config.get("neuroexplorer", {}).get("aligned_rate", {}))
-    expected_step = aligned_cfg.get("bin_width_s")
+    time_cluster_aligned_cfg = config.get("time_cluster_aligned_rate", {})
+    expected_step = time_cluster_aligned_cfg.get("bin_width_s")
+    if expected_step is None:
+        expected_step = config.get("neuroexplorer", {}).get("fullrate", {}).get("bin_width_s")
     if expected_step is not None and not math.isclose(
         median_step,
         float(expected_step),
@@ -553,10 +583,12 @@ def prepare_analysis_matrix(config: dict, aligned: pd.DataFrame, unit_metadata: 
         abs_tol=max(1.0e-9, abs(float(expected_step)) * 1.0e-6),
     ):
         raise ValueError(
-            f"Aligned time step {median_step:g} s does not match configured aligned_rate.bin_width_s={float(expected_step):g} s."
+            f"Aligned time step {median_step:g} s does not match the dedicated time-cluster bin width={float(expected_step):g} s."
         )
-    analysis_window, baseline_window, test_window = _validate_and_resolve_windows(config, cfg, available_time)
-    analysis_mask_available = (available_time >= analysis_window[0]) & (available_time <= analysis_window[1])
+    analysis_window, baseline_window, test_window = _validate_and_resolve_windows(
+        config, cfg, available_time, median_step
+    )
+    analysis_mask_available = (available_time >= analysis_window[0]) & (available_time < analysis_window[1])
     time_s = available_time[analysis_mask_available]
     tolerance = max(1.0e-9, abs(median_step) * 1.0e-6)
     baseline_mask = (time_s >= baseline_window[0] - tolerance) & (time_s < baseline_window[1] - tolerance)
@@ -586,7 +618,12 @@ def prepare_analysis_matrix(config: dict, aligned: pd.DataFrame, unit_metadata: 
     raw_frame = raw_frame.reindex(index=units["sample_id"], columns=time_s)
     raw = raw_frame.to_numpy(dtype=float)
 
-    include_only = bool(cfg.get("include_only_unit_quality_include_yes", True))
+    if not bool(cfg.get("include_only_unit_quality_include_yes", True)):
+        raise ValueError(
+            "time_cluster_permutation.include_only_unit_quality_include_yes cannot be false; "
+            "unit_quality_table is the mandatory Unit cohort source."
+        )
+    include_only = True
     duplicate_policy = str(cfg.get("duplicate_policy", "exclude_duplicates")).strip().lower()
     if duplicate_policy not in {"keep_all", "exclude_duplicates", "keep_representative_only"}:
         raise ValueError("duplicate_policy must be keep_all, exclude_duplicates, or keep_representative_only.")
@@ -656,6 +693,7 @@ def prepare_analysis_matrix(config: dict, aligned: pd.DataFrame, unit_metadata: 
             )
     return PreparedAnalysis(
         time_s=time_s,
+        bin_width_s=median_step,
         raw_rate_hz=raw[included, :],
         delta_rate_hz=delta[included, :],
         included_units=units[included].reset_index(drop=True),
@@ -683,6 +721,45 @@ def _shade_windows(axis, prepared: PreparedAnalysis) -> None:
     axis.axvline(0.0, color="black", linestyle="--", linewidth=1.0, label="stimulus")
 
 
+def heatmap_x_extent(time_s: np.ndarray, bin_width_s: float) -> tuple[float, float]:
+    values = np.asarray(time_s, dtype=float)
+    if values.ndim != 1 or values.size == 0:
+        raise ValueError("Heatmap time axis must contain at least one bin center.")
+    if not math.isfinite(bin_width_s) or bin_width_s <= 0:
+        raise ValueError("Heatmap bin width must be a positive finite value.")
+    return float(values[0] - bin_width_s / 2.0), float(values[-1] + bin_width_s / 2.0)
+
+
+def _save_heatmap_figure(prepared: PreparedAnalysis, output_path: Path, dpi: int) -> None:
+    finite_delta = prepared.delta_rate_hz[np.isfinite(prepared.delta_rate_hz)]
+    color_limit = float(np.max(np.abs(finite_delta))) if finite_delta.size else 1.0
+    color_limit = color_limit if color_limit > 0 else 1.0
+    x_start, x_end = heatmap_x_extent(prepared.time_s, prepared.bin_width_s)
+    colormap = plt.get_cmap("RdBu_r").copy()
+    colormap.set_bad(color="#BDBDBD", alpha=1.0)
+    figure, axis = plt.subplots(figsize=(10, max(4.0, 0.22 * len(prepared.included_units) + 2.0)))
+    image = axis.imshow(
+        np.ma.masked_invalid(prepared.delta_rate_hz),
+        aspect="auto",
+        interpolation="nearest",
+        cmap=colormap,
+        vmin=-color_limit,
+        vmax=color_limit,
+        extent=[x_start, x_end, len(prepared.included_units) - 0.5, -0.5],
+    )
+    axis.axvline(0.0, color="black", linestyle="--", linewidth=1.0)
+    axis.set_title("Unit-level baseline-corrected firing rate")
+    axis.set_xlabel("Aligned bin center time (s); 0 s is a bin boundary")
+    axis.set_ylabel("Independent unit")
+    if len(prepared.included_units) <= 40:
+        axis.set_yticks(np.arange(len(prepared.included_units)))
+        axis.set_yticklabels(prepared.included_units["sample_id"].tolist(), fontsize=7)
+    figure.colorbar(image, ax=axis, label="Delta firing rate (Hz)")
+    figure.tight_layout()
+    figure.savefig(output_path, dpi=dpi)
+    plt.close(figure)
+
+
 def save_figures(
     prepared: PreparedAnalysis,
     result: ClusterPermutationResult,
@@ -698,30 +775,7 @@ def save_figures(
         "t_statistic": figure_dir / f"temporal_t_statistic.{extension}",
     }
 
-    finite_delta = prepared.delta_rate_hz[np.isfinite(prepared.delta_rate_hz)]
-    color_limit = float(np.max(np.abs(finite_delta))) if finite_delta.size else 1.0
-    color_limit = color_limit if color_limit > 0 else 1.0
-    figure, axis = plt.subplots(figsize=(10, max(4.0, 0.22 * len(prepared.included_units) + 2.0)))
-    image = axis.imshow(
-        prepared.delta_rate_hz,
-        aspect="auto",
-        interpolation="nearest",
-        cmap="RdBu_r",
-        vmin=-color_limit,
-        vmax=color_limit,
-        extent=[prepared.time_s[0], prepared.time_s[-1], len(prepared.included_units) - 0.5, -0.5],
-    )
-    _shade_windows(axis, prepared)
-    axis.set_title("Unit-level baseline-corrected firing rate")
-    axis.set_xlabel("Stimulus-aligned time (s)")
-    axis.set_ylabel("Independent unit")
-    if len(prepared.included_units) <= 40:
-        axis.set_yticks(np.arange(len(prepared.included_units)))
-        axis.set_yticklabels(prepared.included_units["sample_id"].tolist(), fontsize=7)
-    figure.colorbar(image, ax=axis, label="Delta firing rate (Hz)")
-    figure.tight_layout()
-    figure.savefig(paths["heatmap"], dpi=dpi)
-    plt.close(figure)
+    _save_heatmap_figure(prepared, paths["heatmap"], dpi)
 
     means = np.nanmean(prepared.delta_rate_hz, axis=0)
     sem = np.full(len(prepared.time_s), np.nan, dtype=float)
@@ -798,7 +852,49 @@ def run_time_cluster_permutation(config: dict, logger: PipelineLogger) -> dict:
     paths = resolve_project_paths(config)
     input_paths = discover_aligned_rate_inputs(config, paths, cfg)
     aligned = load_aligned_rate_inputs(input_paths)
-    unit_metadata = _load_unit_metadata(config, paths)
+    cohort = select_unit_cohort(
+        config,
+        aligned[["file_id", "unit_id"]],
+        module="time_cluster_permutation",
+        logger=logger,
+        duplicate_policy=cfg.get("duplicate_policy", "exclude_duplicates"),
+        minimum_included_units=1,
+    )
+    alignment_methods = sorted(aligned["alignment_method"].dropna().astype(str).unique().tolist())
+    alignment_offsets = (
+        sorted(pd.to_numeric(aligned.get("alignment_offset_s"), errors="coerce").dropna().unique().astype(float).tolist())
+        if "alignment_offset_s" in aligned.columns
+        else []
+    )
+    stimulus_times_aligned = (
+        sorted(pd.to_numeric(aligned.get("stimulus_time_aligned_s"), errors="coerce").dropna().unique().astype(float).tolist())
+        if "stimulus_time_aligned_s" in aligned.columns
+        else []
+    )
+    source_bin_widths = (
+        sorted(pd.to_numeric(aligned.get("source_bin_width_s"), errors="coerce").dropna().unique().astype(float).tolist())
+        if "source_bin_width_s" in aligned.columns
+        else []
+    )
+    target_bin_widths = (
+        sorted(pd.to_numeric(aligned.get("target_bin_width_s"), errors="coerce").dropna().unique().astype(float).tolist())
+        if "target_bin_width_s" in aligned.columns
+        else []
+    )
+    source_bins_per_target = (
+        sorted(pd.to_numeric(aligned.get("n_source_bins"), errors="coerce").dropna().unique().astype(int).tolist())
+        if "n_source_bins" in aligned.columns
+        else []
+    )
+    rebin_methods = (
+        sorted(aligned["rebin_method"].dropna().astype(str).unique().tolist())
+        if "rebin_method" in aligned.columns
+        else []
+    )
+    unit_metadata = cohort.quality_table.copy()
+    unit_metadata["include_bool"] = unit_metadata["include"].map(
+        lambda value: str(value).strip().lower() == "yes" if not pd.isna(value) else False
+    )
     prepared = prepare_analysis_matrix(config, aligned, unit_metadata)
     test_values = prepared.delta_rate_hz[:, prepared.test_mask]
     test_time = prepared.time_s[prepared.test_mask]
@@ -814,6 +910,7 @@ def run_time_cluster_permutation(config: dict, logger: PipelineLogger) -> dict:
     )
     output_dir = resolve_path(paths["statistics_dir"], str(cfg["output_subdir"]))
     output_dir.mkdir(parents=True, exist_ok=True)
+    cohort_paths = write_cohort_metadata(cohort, output_dir)
     cluster_path = output_dir / "cluster_table.csv"
     time_stats_path = output_dir / "time_bin_statistics.csv"
     matrix_path = output_dir / "unit_time_analysis_matrix.csv"
@@ -847,13 +944,29 @@ def run_time_cluster_permutation(config: dict, logger: PipelineLogger) -> dict:
         "n_units_included": int(len(prepared.included_units)),
         "n_units_excluded": int(len(excluded)),
         "excluded_reason_counts": excluded["exclusion_reason"].value_counts().to_dict(),
+        "include_status_counts": cohort.metadata["include_status_counts"],
+        "quality_exclusion_reason_counts": cohort.metadata["quality_exclusion_reason_counts"],
+        "duplicate_policy": cohort.metadata["duplicate_policy"],
+        "unit_cohort_table": str(cohort_paths["table"]),
+        "unit_cohort_metadata": str(cohort_paths["metadata"]),
         "n_analysis_time_bins": int(len(prepared.time_s)),
         "n_test_time_bins": int(np.count_nonzero(prepared.test_mask)),
+        "aligned_bin_width_s": prepared.bin_width_s,
+        "aligned_bin_semantics": "[k*bin_width_s, (k+1)*bin_width_s), center=(k+0.5)*bin_width_s; 0 s is a boundary",
+        "alignment_methods": alignment_methods,
+        "alignment_offsets_s": alignment_offsets,
+        "stimulus_times_aligned_s": stimulus_times_aligned,
+        "source_bin_widths_s": source_bin_widths,
+        "target_bin_widths_s": target_bin_widths,
+        "source_bins_per_target": source_bins_per_target,
+        "rebin_methods": rebin_methods,
         "analysis_window_s": list(prepared.analysis_window_s),
         "baseline_window_s": list(prepared.baseline_window_s),
         "test_window_s": list(prepared.test_window_s),
         "time_unit": "seconds",
         "rate_unit": "Hz",
+        "heatmap_color_semantics": "cell color is delta_rate_hz only; missing values use the opaque bad-value color",
+        "heatmap_window_shading": False,
         "statistic": "one_sample_t",
         "tail": int(cfg["tail"]),
         "cluster_forming_alpha": float(cfg["cluster_forming_alpha"]),
@@ -903,7 +1016,10 @@ def run_time_cluster_permutation(config: dict, logger: PipelineLogger) -> dict:
             f"Completed unit-level temporal cluster permutation. n_read={metadata['n_units_read']}; "
             f"n_included={metadata['n_units_included']}; n_excluded={metadata['n_units_excluded']}; "
             f"n_time_bins={metadata['n_test_time_bins']}; permutations={result.n_permutations}; "
-            f"significant_clusters={metadata['n_significant_clusters']}"
+            f"significant_clusters={metadata['n_significant_clusters']}; "
+            f"alignment_methods={alignment_methods}; alignment_offsets_s={alignment_offsets}; "
+            f"stimulus_times_aligned_s={stimulus_times_aligned}; rebin_methods={rebin_methods}; "
+            f"source_bin_widths_s={source_bin_widths}; target_bin_widths_s={target_bin_widths}"
         ),
     )
     print(f"Units read: {metadata['n_units_read']}")
@@ -911,6 +1027,11 @@ def run_time_cluster_permutation(config: dict, logger: PipelineLogger) -> dict:
     print(f"Analysis/test time bins: {metadata['n_analysis_time_bins']}/{metadata['n_test_time_bins']}")
     print(f"Baseline window (s): {prepared.baseline_window_s}")
     print(f"Test window (s): {prepared.test_window_s}")
+    print(f"Alignment methods/offsets (s): {alignment_methods}/{alignment_offsets}")
+    print(f"Actual stimulus positions on aligned axis (s): {stimulus_times_aligned}")
+    print(
+        f"Rebin methods/source->target widths (s): {rebin_methods}/{source_bin_widths}->{target_bin_widths}"
+    )
     print(f"Permutations: {result.n_permutations} ({result.permutation_method})")
     print(f"Significant clusters: {metadata['n_significant_clusters']}")
     print(f"Output directory: {output_dir}")

@@ -15,7 +15,8 @@ from utils.file_id_utils import canonicalize_file_id, legacy_file_id_candidates
 from utils.event_utils import derive_light_on_off_from_intervals, read_light_intervals
 from utils.logging_utils import PipelineLogger
 from utils.path_utils import load_yaml, resolve_project_paths
-from utils.table_utils import normalize_include_column, normalize_stim_schedule, read_table
+from utils.table_utils import normalize_stim_schedule, read_table
+from utils.unit_selection import select_quality_table_cohort, write_cohort_metadata
 
 try:
     import win32com.client  # type: ignore
@@ -254,7 +255,12 @@ def _resolve_psth_duration(intervals: list[tuple[float, float]], policy: str) ->
 def plot_in_origin(config: dict, logger: PipelineLogger) -> None:
     paths = resolve_project_paths(config)
     stim_df = normalize_stim_schedule(read_table(paths["stim_schedule_path"]), file_id_column=config["project"]["file_id_column"])
-    unit_df = normalize_include_column(read_table(paths["unit_quality_path"]))
+    unit_df, cohort = select_quality_table_cohort(
+        config,
+        module="plot_in_origin",
+        logger=logger,
+        duplicate_policy=config.get("unit_selection", {}).get("duplicate_policy", "keep_all"),
+    )
     file_id_column = config["project"]["file_id_column"]
     if "pl2_file" not in unit_df.columns:
         unit_df["pl2_file"] = ""
@@ -266,7 +272,7 @@ def plot_in_origin(config: dict, logger: PipelineLogger) -> None:
         canonicalize_file_id(str(row[file_id_column]), row.get("pl2_file"), config)
         for row in unit_df.to_dict("records")
     ]
-    included_df = unit_df[unit_df["include_bool"]].copy()
+    included_df = unit_df.copy()
     plotting_cfg = _plotting_cfg(config)
     aligned_cfg = _aligned_cfg(config)
 
@@ -275,6 +281,8 @@ def plot_in_origin(config: dict, logger: PipelineLogger) -> None:
     logger.log("plot_in_origin", "*", str(psth_path), str(fullrate_path), "success", "Scanning exported rate tables.")
 
     origin_adapter = OriginAdapter(use_com=config["origin"].get("use_com", True))
+    if not config.get("run", {}).get("dry_run", False):
+        write_cohort_metadata(cohort, paths["figure_summary_dir"], stem="plot_unit_cohort")
 
     for file_id, file_units in included_df.groupby(file_id_column, sort=False):
         stim_sub = stim_df[stim_df[file_id_column] == file_id]

@@ -63,6 +63,7 @@ The older direct NeuroExplorer PSTH route is experimental fallback only.
 - Event helper export only: `prepare_events.py`
 - NeuroExplorer fullrate bridge: `export_from_neuroexplorer.py`
 - Fullrate-aligned reconstruction: `scripts/build_aligned_rate_from_fullrate.py`
+- Dedicated time-cluster reconstruction: `scripts/build_time_cluster_aligned_rate.py`
 - Plotting: `plot_in_origin.py`
 - Native OriginPro plotting: `origin_native_plot.py` / `scripts/origin_native_plot.py`
 - Native OriginPro template seeding: `origin_create_templates.py` / `scripts/origin_native/create_origin_templates.py`
@@ -103,6 +104,7 @@ python run_pipeline.py --config config.yaml --module validate
 python run_pipeline.py --config config.yaml --module prepare_events
 python run_pipeline.py --config config.yaml --module neuroexplorer_export
 python run_pipeline.py --config config.yaml --module aligned_rate
+python run_pipeline.py --config config.yaml --module time_cluster_aligned_rate
 python run_pipeline.py --config config.yaml --module time_cluster_permutation
 python run_pipeline.py --config config.yaml --module export_figures
 python run_pipeline.py --config config.yaml --module origin_create_templates
@@ -115,8 +117,13 @@ python run_pipeline.py --config config.yaml --module prelightpost_stats
 
 - Full-session shading is absolute-time:
   - `light_on_s -> light_off_s`
-- Aligned-rate shading is light-on aligned:
-  - `0 -> duration_s`
+- Normal `aligned_rate` preserves the original fullrate-aligned definition: `aligned_time_s = time_bin_center_s - light_on_s`; 0 s may be a bin center. Its half-open PreLightPost window selection and output files remain unchanged.
+- `time_cluster_aligned_rate` is a separate builder. Its bins are half-open intervals `[kΔ, (k+1)Δ)` with centers `(k+0.5)Δ`; 0 s is a bin boundary, never a center.
+- Dedicated reconstruction uses real fullrate start/end/center columns. If onset is not a source-bin boundary, `time_cluster_aligned_rate.off_boundary_policy` controls handling and the actual boundary/offset is recorded; `nearest` may place the real stimulus away from aligned 0 s.
+- A dedicated target width larger than the source width is supported only as an integer multiple with complete contiguous source coverage. Rates are duration-weighted; source/target widths, source-bin count, and rebin method are recorded. Partial target bins fail.
+- `time_cluster_aligned_rate.source_bin_width_s` selects the dedicated source fullrate export independently from `neuroexplorer.fullrate.bin_width_s`; null preserves compatibility inheritance. This source is still a binned RateHist CSV, not raw spike timestamps.
+- `time_cluster_aligned_rate.incomplete_target_bin_policy` defaults to `error`. `nan` may be used for unequal recording lengths: incomplete target intervals retain their true boundaries but receive missing firing rate plus explicit coverage/method metadata; never compute a target value from partial coverage.
+- Do not use, copy, or rename normal `LightAlignedRate` files as time-cluster inputs. Rebuild `03_nex_exports/time_cluster_aligned_rate` whenever upgrading an existing project to this split layout.
 - Mainline Pre/light/post windows are controlled by:
   - `aligned_rate.pre_window_s`
   - `aligned_rate.light_window_s`
@@ -139,9 +146,14 @@ python run_pipeline.py --config config.yaml --module prelightpost_stats
 - `pre_hz` is an alias of `baseline_hz`; `baseline_hz` remains in output.
 - No-light files do not enter the pre/light/post QC table; they are recorded in `qc_excluded` and/or `skipped_or_missing`.
 - `summary_by_file` and `summary_by_condition` CSV outputs are no longer generated.
-- `include == yes/true/1` units only.
-- Duplicates must be excluded from counting and PPT inclusion.
-- `time_cluster_permutation` is opt-in and reads existing `LightAlignedRate` CSVs; one `(file_id, unit_id)` is one exchange unit after within-unit trial averaging.
+- `unit_quality_table` is the only downstream Unit cohort source. Only literal `include: yes` is eligible; `no`, blank, other values, and missing rows are excluded.
+- Missing tables, unmatched analysis Units, or an empty eligible cohort must fail with an actionable message; never silently include all Units.
+- Auto pipeline updates append new Units with default `include: yes` while `preserve_manual_edits: true` preserves manual `no`, duplicate, reason, representative, and note fields.
+- Fullrate and aligned-rate source/intermediate CSVs retain all Units. Apply cohort selection at Summary/statistics/plot/PPTX/permutation entry points.
+- Record discovered/included/excluded counts, reason/status counts, and the effective duplicate policy in logs or cohort metadata.
+- `time_cluster_permutation` is opt-in and reads only `03_nex_exports/time_cluster_aligned_rate/*_TimeClusterAlignedRate_*.csv`; it does not inherit normal `aligned_rate` config or read `LightAlignedRate` CSVs. One `(file_id, unit_id)` is one exchange unit after within-unit trial averaging.
+- Terminal-only normal branch: `python build_aligned_rate_from_fullrate.py --config config.yaml`.
+- Terminal-only time-cluster branch: first `python build_time_cluster_aligned_rate.py --config config.yaml`, then `python time_cluster_permutation.py --config config.yaml`.
 - Temporal cluster results are unit-level inferences. They do not model within-animal/session dependence, make each bin independently significant, or define exact physiological onset boundaries.
 
 ## NeuroExplorer / Origin Policy
@@ -164,6 +176,7 @@ python run_pipeline.py --config config.yaml --module prelightpost_stats
 - Use the workspace root as the only development source directory for this skill.
 - Treat the user-level Codex skill entry as a Windows junction to the project source, not as an independent editable copy.
 - Make all future code, test, config-template, and documentation changes in the workspace root so the source and Codex user skill stay synchronized.
+- `README.md` 和 `HELP.md` 必须使用中文编写；命令、路径、配置键、数据字段、文件名和其他技术标识保持原样。
 
 ## When To Read More
 

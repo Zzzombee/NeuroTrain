@@ -23,6 +23,7 @@ PROJECT_DIRS = [
     "02_stim_events/exported_events",
     "03_nex_exports/fullrate",
     "03_nex_exports/aligned_rate",
+    "03_nex_exports/time_cluster_aligned_rate",
     "03_nex_exports/psth",
     "03_nex_exports/raster",
     "04_origin_projects/templates",
@@ -88,6 +89,7 @@ def _project_readme_text(project_dir: Path) -> str:
 - `02_stim_events/stim_schedule_master.xlsx`: auto-generated / manually curated stimulation schedule
 - `03_nex_exports/fullrate/`: NeuroExplorer full-session numerical exports
 - `03_nex_exports/aligned_rate/`: aligned-rate reconstructions and summary tables
+- `03_nex_exports/time_cluster_aligned_rate/`: dedicated boundary-aligned inputs for time-cluster permutation
 - `05_exported_figures/`: exported figures
 - `06_pptx/`: PowerPoint output
 
@@ -127,6 +129,8 @@ python run_pipeline.py --config config.yaml --module build_stim_schedule
 python run_pipeline.py --config config.yaml --module build_unit_table
 python run_pipeline.py --config config.yaml --module batch_gui_export_fullrate
 python run_pipeline.py --config config.yaml --module aligned_rate
+python run_pipeline.py --config config.yaml --module time_cluster_aligned_rate
+python run_pipeline.py --config config.yaml --module time_cluster_permutation
 python run_pipeline.py --config config.yaml --module export_figures
 python run_pipeline.py --config config.yaml --module build_pptx
 ```
@@ -169,6 +173,19 @@ Recommended order:
   - pre: `[-60, 0]`
   - light: `[5, 20]`
   - post: `[25, 85]`
+
+The ordinary aligned-rate branch subtracts `light_on_s` from source bin
+centers, so 0 s may be a center. The independent time-cluster builder uses
+real source-bin boundaries and writes only to
+`03_nex_exports/time_cluster_aligned_rate/`; its 0 s is a bin boundary. Do not
+use normal `LightAlignedRate` files as permutation input.
+
+`unit_quality_table.xlsx` is the only downstream Unit cohort source. Only the
+literal value `include = yes` is eligible. Auto updates append new Units with
+`yes` while preserving manual edits; standalone analysis commands fail on a
+missing table, unmatched Units, or an empty eligible cohort. Fullrate and
+aligned-rate intermediate CSVs retain all Units, and each analysis branch
+writes cohort CSV/JSON metadata.
 
 ## Manual review checklist
 
@@ -291,8 +308,21 @@ def build_init_config(
     config["aligned_rate"]["bin_width_s"] = bin_width
     config["aligned_rate"]["multi_trial_aggregation"] = "mean"
     config["aligned_rate"]["variable_duration_policy"] = "keep_trials"
-    config["aligned_rate"]["require_light_on_on_bin_boundary"] = False
-    config["aligned_rate"]["off_boundary_policy"] = "nearest"
+    config["aligned_rate"].pop("require_light_on_on_bin_boundary", None)
+    config["aligned_rate"].pop("off_boundary_policy", None)
+    config.setdefault("time_cluster_aligned_rate", {})["enabled"] = True
+    config["time_cluster_aligned_rate"]["output_dir"] = "03_nex_exports/time_cluster_aligned_rate"
+    config["time_cluster_aligned_rate"]["window_s"] = [-abs(pre_margin), 300]
+    config["time_cluster_aligned_rate"]["source_bin_width_s"] = None
+    config["time_cluster_aligned_rate"]["bin_width_s"] = None
+    config["time_cluster_aligned_rate"]["incomplete_target_bin_policy"] = "error"
+    config["time_cluster_aligned_rate"]["require_light_on_on_bin_boundary"] = False
+    config["time_cluster_aligned_rate"]["off_boundary_policy"] = "nearest"
+    config.setdefault("time_cluster_permutation", {})["input_dir"] = "03_nex_exports/time_cluster_aligned_rate"
+    config["time_cluster_permutation"]["input_pattern"] = "*_TimeClusterAlignedRate_*.csv"
+    config["time_cluster_permutation"]["analysis_window_s"] = [-abs(pre_margin), 300]
+    config["time_cluster_permutation"]["baseline_window_s"] = [-abs(pre_margin), 0]
+    config["time_cluster_permutation"]["test_window_s"] = [0, 300]
     config.setdefault("plotting", {})["psth_like_from_fullrate"] = True
     config["plotting"].pop("full_session_light_band_source", None)
     config["plotting"]["aligned_light_band_start_s"] = 0
@@ -394,6 +424,7 @@ def build_init_config(
             "prepare_events": False,
             "neuroexplorer_export": True,
             "aligned_rate": True,
+            "time_cluster_aligned_rate": False,
             "time_cluster_permutation": False,
             "export_figures": True,
             "origin_create_templates": False,

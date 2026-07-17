@@ -18,7 +18,8 @@ from utils.event_utils import read_light_intervals
 from utils.file_id_utils import canonicalize_file_id, infer_has_light_from_identifiers, legacy_file_id_candidates
 from utils.logging_utils import PipelineLogger
 from utils.path_utils import load_yaml, resolve_project_paths
-from utils.table_utils import normalize_include_column, normalize_stim_schedule, read_table
+from utils.table_utils import normalize_stim_schedule, read_table
+from utils.unit_selection import select_quality_table_cohort, write_cohort_metadata
 
 
 def _aligned_cfg(config: dict) -> dict:
@@ -251,87 +252,15 @@ def _figure_path_with_legacy(
     return canonical_path
 
 
-def _units_from_fullrate_csv(config: dict, paths: dict, file_id: str) -> list[dict]:
-    fullrate_csv = next(
-        (
-            paths["nex_fullrate_dir"] / config["neuroexplorer"]["export"]["expected_fullrate_pattern"].format(
-                file_id=candidate,
-                bin_width_s=config["neuroexplorer"]["fullrate"]["bin_width_s"],
-            )
-            for candidate in legacy_file_id_candidates(file_id, None, config)
-            if (
-                paths["nex_fullrate_dir"] / config["neuroexplorer"]["export"]["expected_fullrate_pattern"].format(
-                    file_id=candidate,
-                    bin_width_s=config["neuroexplorer"]["fullrate"]["bin_width_s"],
-                )
-            ).exists()
-        ),
-        None,
-    )
-    if fullrate_csv is None:
-        return []
-    try:
-        fullrate_df = read_table(fullrate_csv)
-    except Exception:
-        return []
-    if "unit_id" not in fullrate_df.columns:
-        return []
-    rows = []
-    original_name_by_unit = {}
-    if "original_name" in fullrate_df.columns:
-        original_name_by_unit = {
-            str(row.unit_id): str(row.original_name)
-            for row in fullrate_df[["unit_id", "original_name"]].dropna(subset=["unit_id"]).drop_duplicates().itertuples(index=False)
-        }
-    for unit_id in sorted({str(value).strip() for value in fullrate_df["unit_id"].dropna().astype(str) if str(value).strip()}):
-        rows.append(
-            {
-                config["project"]["file_id_column"]: file_id,
-                "unit_id": unit_id,
-                "original_name": original_name_by_unit.get(unit_id, unit_id),
-                "include": "yes",
-                "include_bool": True,
-                "note": "",
-                "unit_source": "fullrate_csv_fallback",
-            }
-        )
-    return rows
-
-
-def _augment_units_from_fullrate_fallback(config: dict, paths: dict, stim_df: pd.DataFrame, included_df: pd.DataFrame, logger: PipelineLogger) -> pd.DataFrame:
-    file_id_column = config["project"]["file_id_column"]
-    existing_file_ids = set(included_df[file_id_column].astype(str).tolist()) if not included_df.empty else set()
-    fallback_rows: list[dict] = []
-    for file_id in stim_df[file_id_column].astype(str).drop_duplicates().tolist():
-        if file_id in existing_file_ids:
-            continue
-        rows = _units_from_fullrate_csv(config, paths, file_id)
-        if not rows:
-            continue
-        fallback_rows.extend(rows)
-        logger.log(
-            "build_pptx",
-            file_id,
-            str(_expected_fullrate_path(config, paths, file_id)),
-            "",
-            "warning",
-            "unit_quality_table missing rows; using fullrate CSV unit_id fallback for PPTX.",
-        )
-    if not fallback_rows:
-        if "unit_source" not in included_df.columns:
-            included_df = included_df.copy()
-            included_df["unit_source"] = "unit_quality_table"
-        return included_df
-    base_df = included_df.copy()
-    if "unit_source" not in base_df.columns:
-        base_df["unit_source"] = "unit_quality_table"
-    return pd.concat([base_df, pd.DataFrame(fallback_rows)], ignore_index=True)
-
-
 def build_pptx(config: dict, logger: PipelineLogger) -> None:
     paths = resolve_project_paths(config)
     stim_df = normalize_stim_schedule(read_table(paths["stim_schedule_path"]), file_id_column=config["project"]["file_id_column"])
-    unit_df = normalize_include_column(read_table(paths["unit_quality_path"]))
+    unit_df, cohort = select_quality_table_cohort(
+        config,
+        module="build_pptx",
+        logger=logger,
+        duplicate_policy=config.get("unit_selection", {}).get("duplicate_policy", "keep_all"),
+    )
     file_id_column = config["project"]["file_id_column"]
     if "pl2_file" not in unit_df.columns:
         unit_df["pl2_file"] = ""
@@ -343,10 +272,11 @@ def build_pptx(config: dict, logger: PipelineLogger) -> None:
         canonicalize_file_id(str(row[file_id_column]), row.get("pl2_file"), config)
         for row in unit_df.to_dict("records")
     ]
-    included_df = unit_df[unit_df["include_bool"]]
-    included_df = _augment_units_from_fullrate_fallback(config, paths, stim_df, included_df, logger)
+    included_df = unit_df
     aligned_cfg = _aligned_cfg(config)
     generate_summary_figures(config=config, logger=logger)
+    if not config.get("run", {}).get("dry_run", False):
+        write_cohort_metadata(cohort, paths["pptx_dir"])
 
     prs = Presentation()
     prs.slide_width = Inches(float(config["pptx"]["slide_width_in"]))

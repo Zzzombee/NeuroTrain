@@ -1,98 +1,86 @@
 # NeuroTrain
 
-NeuroTrain: event-aligned spike train analysis workflow for fullrate, PSTH-like traces, raster plots, statistics, and presentation-ready outputs.
+NeuroTrain 是一套事件对齐的脉冲序列分析工作流，用于处理全时段放电率、类 PSTH 曲线、栅格图、统计结果以及可直接用于汇报的演示文稿。
 
-The current stable workflow is:
+当前稳定流程为：
 
-`.pl2` -> NeuroExplorer `RateHist_FullSession` -> `SaveNumResults` full-session rate -> Python light-aligned rate reconstruction -> figures -> PPTX.
-
-## Development source of truth
-
-Maintain this skill only in the workspace root. The user-level Codex `neurotrain` skill path should be a Windows junction pointing to this project directory. Do not edit or develop against a separate user-directory copy. All future code, test, config-template, and documentation changes should be made in the workspace root so the source and Codex skill stay synchronized.
-
-## Recommended workflow
-
-1. Prepare `.pl2` files.
-2. Auto-build or update `stim_schedule_master` from `.pl2` filenames, or edit it manually if needed.
-3. Auto-build or update `unit_quality_table` from `.pl2` neuron names.
-4. Create the NeuroExplorer template `RateHist_FullSession`.
-5. Run the `fullrate_aligned` pipeline.
-6. Inspect `FullRate`, `AlignedRate`, and `PreLightPost` figures.
-7. Inspect the PPTX.
-8. Optionally inspect the OriginPro OPJU archive.
-
-## Default mode
-
-The default config now uses:
-
-- `analysis.mode: auto`
-- `auto` prefers `fullrate_aligned` first
-- `neuroexplorer.export_fullrate: true`
-- aligned/pre-light/light/post windows are controlled by `aligned_rate.pre_window_s`, `aligned_rate.light_window_s`, and `aligned_rate.post_window_s`
-
-This mode:
-
-- does not require `Light_On` inside NeuroExplorer
-- does not require `Light_Interval` inside NeuroExplorer
-- uses `stim_schedule_master` as the alignment source
-- produces a PSTH-like aligned rate view from full-session rate bins
-- uses the union of configured windows as the aligned display/reconstruction window:
-  - pre: `-60` to `0`
-  - light statistics: `5` to `20`
-  - post: `25` to `85`
-  - aligned span/tag: `pre60_post85`
-  - light band: `0` to `duration_s`
-- writes those exact window bounds into `03_nex_exports/aligned_rate/{file_id}_PreLightPostSummary.csv`
-
-It is not a spike-timestamp PSTH. Time precision is limited by the full-session rate bin width.
-
-The active pre/light/post window config is:
-
-```yaml
-aligned_rate:
-  pre_window_s:
-    - -60
-    - 0
-  light_window_s:
-    - 5
-    - 20
-  post_window_s:
-    - 25
-    - 85
+```text
+.pl2
+-> NeuroExplorer RateHist_FullSession
+-> SaveNumResults 全时段放电率
+-> Python 重建光刺激对齐曲线
+-> 图像
+-> PPTX
 ```
 
-These three fields are the only mainline parameters controlling the PreLightPost numeric windows. Legacy fields such as `summary_window_mode`, `baseline_window_s`, `post_window_mode`, and `post_window_after_light_s` are compatibility-only and should not be used in new project configs.
+## 开发源目录
 
-## Clean Config Reference
+本技能只在工作区根目录中维护。用户级 Codex `neurotrain` 技能目录应是指向本项目目录的 Windows junction，不应维护另一份独立副本。今后的代码、测试、配置模板和文档修改均应在工作区根目录完成，以保证项目源码与 Codex 技能始终同步。
 
-The default `config_template.yaml` keeps only the stable fullrate-aligned workflow settings. Mainline projects should edit these fields, not legacy PSTH/event-helper settings.
+## 推荐流程
+
+1. 准备 `.pl2` 文件。
+2. 根据文件名自动创建或更新 `stim_schedule_master`，必要时再手工编辑。
+3. 根据 `.pl2` 中的神经元名称自动创建或更新 `unit_quality_table`。
+4. 在 NeuroExplorer 中创建 `RateHist_FullSession` 模板。
+5. 运行 `fullrate_aligned` 流程。
+6. 检查 `FullRate`、`AlignedRate` 和 `PreLightPost` 图像。
+7. 检查 PPTX；如有需要，再检查 OriginPro OPJU 归档。
+
+## 默认模式
 
 ```yaml
 analysis:
   mode: "auto"
+
+aligned_rate:
+  pre_window_s: [-60, 0]
+  light_window_s: [5, 20]
+  post_window_s: [25, 85]
 ```
 
-- `analysis.mode`: workflow selector. `auto` resolves to `fullrate_aligned` when full-session exports or no-light controls are present.
+`auto` 优先选择 `fullrate_aligned`，并默认启用 `neuroexplorer.export_fullrate: true`。该模式：
+
+- 不要求 NeuroExplorer 文档内存在 `Light_On` 或 `Light_Interval`。
+- 使用 `stim_schedule_master` 作为对齐时间来源。
+- 从全时段放电率分箱重建类 PSTH 的光刺激对齐曲线。
+- 使用三个窗口的并集作为重建与显示范围；默认标签为 `pre60_post85`。
+- 图中的光照带为 `0` 到 `duration_s`。
+- 将实际窗口边界写入 `03_nex_exports/aligned_rate/{file_id}_PreLightPostSummary.csv`。
+
+这里得到的不是基于脉冲时间戳的 PSTH；时间精度受全时段放电率分箱宽度限制。以上三个 `aligned_rate` 字段是主流程中控制 PreLightPost 数值窗口的唯一参数。`summary_window_mode`、`baseline_window_s`、`post_window_mode` 和 `post_window_after_light_s` 等旧字段只用于兼容，不应写入新项目配置。
+
+普通 `aligned_rate` 分支保留原始定义：
+
+```text
+aligned_time_s = time_bin_center_s - light_on_s
+start_s <= aligned_time_s < end_s
+```
+
+因此 0 秒可以是分箱中心。普通分支不使用时间簇分支的边界策略，也不写入边界对齐元数据。
+
+## 配置参考
+
+默认 `config_template.yaml` 只保留稳定 fullrate-aligned 主流程设置。新项目应优先修改本节字段，不要依赖旧 PSTH 或事件辅助字段。
+
+### 项目与输入
 
 ```yaml
 project:
   root_dir: "E:/example/project"
   file_id_column: "file_id"
-```
 
-- `project.root_dir`: absolute project folder.
-- `project.file_id_column`: table column used to join stim schedule, unit table, exports, figures, PPTX, and statistics.
-
-```yaml
 input:
   pl2_dir: "00_raw_pl2"
   stim_schedule: "02_stim_events/stim_schedule_master.xlsx"
   unit_quality_table: "01_sorting_info/unit_quality_table.xlsx"
 ```
 
-- `input.pl2_dir`: source `.pl2` folder relative to `root_dir`.
-- `input.stim_schedule`: stimulation schedule table.
-- `input.unit_quality_table`: unit inclusion/QC table.
+- `root_dir` 是项目绝对路径。
+- `file_id_column` 用于连接刺激计划、单元表、导出、图像、PPTX 和统计表。
+- 三个 `input` 路径均相对于 `root_dir`。
+
+### 自动生成刺激计划
 
 ```yaml
 stim_schedule:
@@ -114,16 +102,9 @@ stim_schedule:
     zero_pad: 2
 ```
 
-- `stim_schedule.auto_build_from_filenames`: build/update schedule from `.pl2` filenames.
-- `stim_schedule.update_existing`: refresh existing schedule rows on pipeline runs.
-- `stim_schedule.preserve_manual_edits`: keep manually edited `condition` and `note` values.
-- `stim_schedule.output_path`: schedule output table.
-- `stim_schedule.source.pl2_dir`: folder scanned for raw files.
-- `stim_schedule.source.file_glob`: file pattern used during scan.
-- `stim_schedule.filename_parser.regex`: light-file naming rule.
-- `stim_schedule.filename_parser.no_light_regex`: no-light control naming rule.
-- `stim_schedule.file_id.format`: canonical `file_id`; default is the two-digit `file_index`, e.g. `01`.
-- `stim_schedule.file_id.zero_pad`: pads `file_index` to two digits.
+运行时会刷新已有行，同时保留人工填写的 `condition` 和 `note`。默认 `file_id` 使用两位 `file_index`，例如 `01`。
+
+### 自动生成单元表
 
 ```yaml
 unit_table:
@@ -135,15 +116,19 @@ unit_table:
     backend: "nex"
     open_pl2: true
     fallback_to_existing_fullrate_exports: true
+
+unit_selection:
+  required: true
+  include_value: "yes"
+  fail_on_unmatched_data_units: true
+  duplicate_policy: "keep_all"
 ```
 
-- `unit_table.enabled`: enables unit table generation/update.
-- `unit_table.auto_build_if_missing`: creates `unit_quality_table` if missing.
-- `unit_table.update_existing`: refreshes the table while preserving manual fields.
-- `unit_table.preserve_manual_edits`: keeps `include`, duplicate annotations, exclusion reason, representative unit, and notes.
-- `unit_table.source.backend`: unit scanning backend. `nex` reads NeuroExplorer neuron names.
-- `unit_table.source.open_pl2`: opens each `.pl2` during scan.
-- `unit_table.source.fallback_to_existing_fullrate_exports`: if PL2 scanning fails, read `unit_id` from existing fullrate CSVs.
+该模块使用 `nex` 读取 `NeuronNames`。新发现 Unit 默认写入 `include: yes`；自动更新只追加缺失行，并在 `preserve_manual_edits: true` 时保留既有 `include: no`、重复单元、排除原因、代表单元和备注。如果 PL2 扫描失败，可从已有 fullrate CSV 读取 `unit_id`。
+
+`unit_quality_table` 是所有下游分析的唯一 Unit cohort 来源。只有字面值 `include: yes` 才纳入；`no`、空值、其他值和缺失行均不纳入。独立命令遇到缺表、数据 Unit 无法匹配或没有任何纳入 Unit 时会终止，并提示先运行 `build_unit_table`。`duplicate_policy` 支持 `keep_all`、`exclude_duplicates` 和 `keep_representative_only`，实际策略与 cohort 计数会写入日志和元数据。
+
+### NeuroExplorer 导出与对齐重建
 
 ```yaml
 neuroexplorer:
@@ -159,51 +144,21 @@ neuroexplorer:
     output_fullrate_dir: "03_nex_exports/fullrate"
     output_aligned_rate_dir: "03_nex_exports/aligned_rate"
     expected_fullrate_pattern: "{file_id}_FullRate_bin{bin_width_s}s.csv"
-```
 
-- `neuroexplorer.enabled`: controls NeuroExplorer export stage.
-- `neuroexplorer.backend`: export backend.
-- `neuroexplorer.use_existing_csv_if_available`: skip NeuroExplorer when expected CSVs already exist.
-- `neuroexplorer.export_fullrate`: stable route requires full-session rate export.
-- `neuroexplorer.fullrate.template_name`: NeuroExplorer analysis template name.
-- `neuroexplorer.fullrate.bin_width_s`: full-session rate bin width in seconds.
-- `neuroexplorer.fullrate.histogram_unit`: expected rate unit.
-- `neuroexplorer.export.output_fullrate_dir`: fullrate CSV output folder.
-- `neuroexplorer.export.output_aligned_rate_dir`: Python reconstructed aligned-rate output folder.
-- `neuroexplorer.export.expected_fullrate_pattern`: canonical fullrate CSV filename pattern.
-
-```yaml
 aligned_rate:
   enabled: true
-  pre_window_s:
-    - -60
-    - 0
-  light_window_s:
-    - 5
-    - 20
-  post_window_s:
-    - 25
-    - 85
+  pre_window_s: [-60, 0]
+  light_window_s: [5, 20]
+  post_window_s: [25, 85]
   align_to: "light_on_s"
   bin_width_s: 1
   multi_trial_aggregation: "mean"
   variable_duration_policy: "keep_trials"
-  require_light_on_on_bin_boundary: false
-  off_boundary_policy: "nearest"
 ```
 
-- `aligned_rate.enabled`: builds Python aligned-rate CSVs from fullrate CSVs.
-- `aligned_rate.pre_window_s`: baseline/pre window relative to light onset. This is the only mainline baseline window setting.
-- `aligned_rate.light_window_s`: light-response statistics window relative to light onset. This is the only mainline light statistics window setting.
-- `aligned_rate.post_window_s`: post-light statistics window relative to light onset. This is the only mainline post window setting.
-- `aligned_rate.align_to`: alignment source column; stable route uses `light_on_s` from `stim_schedule_master`.
-- `aligned_rate.bin_width_s`: expected aligned-rate bin width.
-- `aligned_rate.multi_trial_aggregation`: aggregated trace method for multi-trial files.
-- `aligned_rate.variable_duration_policy`: behavior when multiple light durations exist in one file.
-- `aligned_rate.require_light_on_on_bin_boundary`: whether light onset must fall exactly on fullrate bin centers.
-- `aligned_rate.off_boundary_policy`: nearest/interpolate/error policy for off-boundary alignment.
+若规范化 CSV 已存在，`use_existing_csv_if_available` 可跳过 NeuroExplorer。fullrate 与 aligned-rate CSV 保留所有发现的 Unit；筛选发生在 Summary、统计、绘图、PPTX 和时间簇分析入口。稳定路径用 `stim_schedule_master.light_on_s` 对齐；`multi_trial_aggregation` 控制多试次汇总，`variable_duration_policy` 控制同一文件存在多个光照时长时的行为。
 
-The aligned-rate CSV tag is derived from the union of the three windows. With the default windows above, outputs use `pre60_post85`.
+### PreLightPost 统计
 
 ```yaml
 statistics:
@@ -214,39 +169,20 @@ statistics:
     input_pattern: "*_PreLightPostSummary.csv"
     output_wide_csv: "all_units_pre_light_post_wide.csv"
     output_wide_qc_csv: "all_units_pre_light_post_wide_qc.csv"
-```
 
-- `statistics.enabled`: enables statistics module configuration.
-- `statistics.output_dir`: statistics output folder.
-- `statistics.prelightpost.input_dir`: existing Summary CSV input folder.
-- `statistics.prelightpost.input_pattern`: normal Summary CSV pattern.
-- `statistics.prelightpost.output_wide_csv`: raw all-unit table.
-- `statistics.prelightpost.output_wide_qc_csv`: activity-QC-passing table.
-- `statistics.prelightpost.output_qc_excluded_csv`: excluded/no-light/missing rows.
-- `statistics.prelightpost.activity_filter.min_max_window_hz`: minimum activity threshold.
-- `statistics.prelightpost.activity_filter.min_total_expected_spikes`: minimum expected spike count threshold.
-
-`prelightpost_stats` does not call NeuroExplorer or recompute aligned traces. It reads existing `PreLightPostSummary.csv` values and uses the same `aligned_rate.pre_window_s/light_window_s/post_window_s` configuration to fill missing window metadata and to compute QC durations when old summaries lack window columns.
-
-```yaml
 run:
   modules:
     prepare_events: false
     prelightpost_stats: false
 ```
 
-- `run.modules.prepare_events`: disabled by default because the stable fullrate-aligned route does not require NeuroExplorer event variables.
-- `run.modules.prelightpost_stats`: disabled by default so statistics are run explicitly after reviewing aligned outputs.
+`prelightpost_stats` 不调用 NeuroExplorer，也不重建对齐曲线。它读取已有 `PreLightPostSummary.csv` 数值，并使用同一组窗口配置补全旧文件缺失的窗口元数据、计算质控时长。默认不随完整流程自动运行，应在检查对齐结果后显式执行。稳定路径不需要 NeuroExplorer 事件变量，因此 `prepare_events` 默认关闭。
 
-## OriginPro outputs
+## OriginPro 输出
 
-There are now two separate Origin-related paths.
+### matplotlib PNG 与 OPJU 归档
 
-### Matplotlib PNG + OPJU archive
-
-`export_figures` remains the stable QC/fallback plotting path. It creates PNG figures in `05_exported_figures/`. If `origin.save_opju: true`, it can also archive those existing CSV/PNG outputs into an OPJU. This archive mode does not create final graphs natively from Origin data; it imports the already generated outputs.
-
-Enable the archive mode with:
+`export_figures` 是稳定的质控与回退绘图路径，在 `05_exported_figures/` 中生成 PNG。启用以下配置后，可把已有 CSV/PNG 归档进 OPJU；该模式不会在 Origin 中从数据重新创建最终图。
 
 ```yaml
 origin:
@@ -260,28 +196,16 @@ origin:
   require_opju_success: false
 ```
 
-The archive imports the configured source tables and generated CSV outputs into workbooks:
+归档会导入 `stim_schedule_master`、`unit_quality_table`、`fullrate_all`、`aligned_rate_all` 和 `prepost_summary_all`，并尝试为各类 PNG 创建图页。
 
-- `stim_schedule_master`
-- `unit_quality_table`
-- `fullrate_all`
-- `aligned_rate_all`
-- `prepost_summary_all`
+### OriginPro 原生绘图
 
-It also attempts to add graph pages for generated fullrate, aligned-rate, pre/light/post, and summary PNG outputs.
-
-### Native OriginPro plotting
-
-`origin_native_plot` is the new editable OriginPro path. It builds a manifest from pipeline CSV outputs, imports those CSVs into OriginPro workbooks, creates graph pages from data, applies `.otpu` templates when available, saves editable `.opju` projects, and optionally exports images from OriginPro.
-
-Terminal:
+`origin_native_plot` 根据流程 CSV 创建 manifest，将数据导入 OriginPro 工作簿，从数据创建图页，在可用时应用 `.otpu`，保存可编辑 `.opju`，并可导出 Origin 图像。
 
 ```powershell
 python run_pipeline.py --config config.yaml --module origin_native_plot
 python origin_native_plot.py --config config.yaml
 ```
-
-Recommended opt-in config:
 
 ```yaml
 origin:
@@ -306,26 +230,16 @@ origin:
       summary: "04_origin_projects/templates/Summary_template.otpu"
 ```
 
-Manifest output:
+manifest 位于 `04_origin_projects/origin_input/origin_plot_manifest.xlsx`，包含 `graph_type`、`file_id`、`unit_id`、`source_csv`、`x_col`、`y_col`、`template_path`、`graph_page_name`、光照带边界、X 轴范围和 `output_image_path`。默认按 `per_file` 分组 OPJU，避免触及 OriginPro 图页或窗口限制。除非 Origin 输出是必需交付物，否则保留 `require_opju_success: false`。
 
-`04_origin_projects/origin_input/origin_plot_manifest.xlsx`
-
-Each manifest row describes one native Origin graph, including `graph_type`, `file_id`, `unit_id`, `source_csv`, `x_col`, `y_col`, `template_path`, `graph_page_name`, light-band bounds, x-axis bounds, and `output_image_path`.
-
-Default native OPJU grouping is `per_file` to avoid OriginPro graph page/window limits. Keep `require_opju_success: false` unless Origin output is mandatory; matplotlib PNGs and PPTX remain independent.
-
-### Native OriginPro template seeding
-
-Use `origin_create_templates` to create seed graphs that mimic the current Python figure style and to probe whether your OriginPro/originpro API can save `.otpu` templates automatically.
-
-Terminal:
+### 创建 OriginPro 模板种子
 
 ```powershell
 python run_pipeline.py --config config.yaml --module origin_create_templates
 python origin_create_templates.py --config config.yaml
 ```
 
-Outputs:
+输出：
 
 ```text
 04_origin_projects/template_seed/origin_template_seed.opju
@@ -335,189 +249,70 @@ Outputs:
 99_logs/origin_template_creation_probe.txt
 ```
 
-If automatic `.otpu` export is not supported by the current OriginPro API, the module still saves `origin_template_seed.opju`. Open that OPJU in OriginPro and manually run `Save Template As...` for the FullRate, AlignedRate, and PreLightPost seed graphs.
+如果 API 不支持自动导出 `.otpu`，请在 OriginPro 中打开 `origin_template_seed.opju`，并对各个种子图手工执行 `Save Template As...`。模板只保存样式，不应固定 `duration_s`；`origin_native_plot` 会从 manifest 读取 `light_band_start_s` 和 `light_band_end_s`。
 
-`.otpu` templates are style-only. Do not hard-code `duration_s` into the template. The `LightBand` start/end is dynamic: `origin_native_plot` reads `light_band_start_s` and `light_band_end_s` from `origin_plot_manifest.xlsx` for each graph.
+如果未生成 OPJU，请检查 OriginPro 安装、`import originpro`、`origin.backend`、`origin.save_opju`/`origin.export_images` 以及 `99_logs/error_log.xlsx`。OriginPro 不可用时，matplotlib PNG 和 PPTX 仍可继续生成。
 
-Template creation config:
+## 自动模式与 NeuroExplorer 模板
 
-```yaml
-origin:
-  native:
-    template_creation:
-      enabled: true
-      seed_opju_path: "04_origin_projects/template_seed/origin_template_seed.opju"
-      auto_save_otpu: true
-      fail_if_otpu_save_failed: false
-      overwrite_templates: true
-```
+`analysis.mode: auto` 的顺序为：尝试 `RateHist_FullSession`、导出全时段数值、在 Python 中重建对齐曲线；仅在该路径失败时尝试实验性的 `neuroexplorer_psth`。
 
-If the OPJU is not generated:
+必须在 NeuroExplorer 中创建并保存 `RateHist_FullSession`。推荐设置为：从 `t=0` 覆盖完整记录，`Bin = 1`，`Histogram Units = Spikes per second`，且不设置参考事件。
 
-1. Check that OriginPro is installed.
-2. Check that Python can `import originpro`.
-3. For native plotting, check that `config.yaml` has `origin.backend: "origin_native"` or `"both"`.
-4. Check that `config.yaml` has `origin.save_opju: true` and/or `origin.export_images: true`.
-5. Review `99_logs/error_log.xlsx`.
-
-If OriginPro or the `originpro` Python package is unavailable, matplotlib PNG figures and PPTX generation continue. Native Origin logs: `OriginPro unavailable; native Origin plotting skipped.`
-
-## Auto mode
-
-`analysis.mode: auto` is now the recommended default.
-
-Order of operations:
-
-1. try `RateHist_FullSession`
-2. export full-session numerical results
-3. rebuild aligned traces in Python
-4. only if that path fails, retry the experimental `neuroexplorer_psth` route
-
-## Required NeuroExplorer template
-
-Create and save:
-
-- `RateHist_FullSession`
-
-Recommended template settings:
-
-- full recording from `t=0`
-- `Bin = 1`
-- `Histogram Units = Spikes per second`
-- no reference event
-
-## Main commands
+## 常用命令
 
 ```powershell
 python run_pipeline.py --module init_project --project-dir "D:\Data\my_ephys_project"
 python run_pipeline.py --config config.yaml
-python scripts/build_stim_schedule_from_filenames.py --config config.yaml
 python run_pipeline.py --config config.yaml --module build_stim_schedule
-python scripts/build_unit_quality_table.py --config config.yaml
 python run_pipeline.py --config config.yaml --module build_unit_table
 python run_pipeline.py --config config.yaml --module neuroexplorer_export
 python run_pipeline.py --config config.yaml --module aligned_rate
+python run_pipeline.py --config config.yaml --module time_cluster_aligned_rate
+python run_pipeline.py --config config.yaml --module time_cluster_permutation
 python run_pipeline.py --config config.yaml --module export_figures
 python run_pipeline.py --config config.yaml --module origin_create_templates
 python run_pipeline.py --config config.yaml --module origin_native_plot
 python run_pipeline.py --config config.yaml --module build_pptx
+python run_pipeline.py --config config.yaml --module prelightpost_stats
 ```
 
-## Initialize a new project
-
-Create a new project scaffold:
+## 初始化项目
 
 ```powershell
 python run_pipeline.py --module init_project --project-dir "D:\Data\my_ephys_project"
-```
-
-Optional:
-
-```powershell
-python scripts/init_project.py --project-dir "D:\Data\my_ephys_project" --force
 python scripts/init_project.py --project-dir "D:\Data\my_ephys_project" --with-example --pre-margin 60 --post-margin 60 --bin-width 1
 ```
 
-Then:
-
-1. Put `.pl2` files into `00_raw_pl2/`
-2. Confirm filenames follow `sorted_01_200light25_1,5,9.pl2`
-3. Prepare the NeuroExplorer template `RateHist_FullSession`
-4. Run the full pipeline
-
-If you run `init_project` in a folder that already contains `sorted_*.pl2`, the skill will only warn. It will not move, copy, rename, or delete raw `.pl2` files automatically.
-
-Move files manually if needed:
+初始化后，将 `.pl2` 放入 `00_raw_pl2/`，确认文件名规则，准备 `RateHist_FullSession`，再运行完整流程。如果根目录已有 `sorted_*.pl2`，初始化器只警告，不会自动移动、复制、重命名或删除原始文件。需要时手工执行：
 
 ```powershell
-Move-Item ".\\sorted_*.pl2" ".\\00_raw_pl2\\"
+Move-Item ".\sorted_*.pl2" ".\00_raw_pl2\"
 ```
 
-## Automatic stim_schedule_master generation from .pl2 filenames
+## 自动生成项目表
 
-The skill can scan `00_raw_pl2/` and build or update:
+刺激计划生成器扫描 `00_raw_pl2/` 并创建或更新 `02_stim_events/stim_schedule_master.xlsx`。
 
-- `02_stim_events/stim_schedule_master.xlsx`
+```text
+sorted_<file_index>_<light_on_s>light<duration_s>_<sorted_channels>.pl2
+sorted_<file_index>_nolight_<sorted_channels>.pl2
+```
 
-Default filename rule:
+`sorted_01_200light25_1,5,9.pl2` 会得到 `file_id=01`、`event_group=200light25`、`light_on_s=200`、`duration_s=25`、`light_off_s=225`。`sorted_02_nolight_1,5,9.pl2` 会得到 `has_light=no`、`condition=no_light`，时间字段留空。生成器支持小数时间，保留人工 `condition`/`note`，追加新文件，并把未再次发现的旧行标记为 `detected_in_latest_scan=no`。
 
-- `sorted_<file_index>_<light_on_s>light<duration_s>_<sorted_channels>.pl2`
-- `sorted_<file_index>_nolight_<sorted_channels>.pl2`
+单元表生成器扫描每个 `.pl2` 的 `NeuronNames`，创建或更新 `01_sorting_info/unit_quality_table.xlsx`：在每个文件内分配 `unit01`、`unit02` 等编号，新单元默认 `include=yes`，保留人工质控字段，仅追加新单元，并把未再次发现的旧行标记为 `detected_in_latest_scan=no`。完整 auto pipeline 会按 `update_existing` 更新表；单独运行分析命令不会自动修改人工表，而是严格校验后运行。
 
-Example:
+## 无光对照
 
-- `sorted_01_200light25_1,5,9.pl2`
+无光文件使用 `sorted_<file_index>_nolight_<sorted_channels>.pl2`。它们仍导出全时段放电率，但跳过真实对齐分析和 PreLightPost；相关面板使用无光占位图，PPTX 元数据标记 `has_light: no`。
 
-Generated fields:
-
-- `file_id = 01`
-- `pl2_file = sorted_01_200light25_1,5,9.pl2`
-- `event_group = 200light25`
-- `light_on_s = 200`
-- `duration_s = 25`
-- `light_off_s = 225`
-- `condition = ""`
-- `note = sorted channels: 1,5,9`
-
-No-light control example:
-
-- `sorted_02_nolight_1,5,9.pl2`
-
-Generated fields:
-
-- `file_id = 02`
-- `event_group = nolight`
-- `has_light = no`
-- `light_on_s = ""`
-- `duration_s = ""`
-- `light_off_s = ""`
-- `condition = no_light`
-- `note = sorted channels: 1,5,9`
-
-Behavior:
-
-- supports decimal onset/duration values such as `sorted_03_120.5light15_2,4.pl2`
-- preserves manual `condition` and `note` edits in an existing schedule
-- adds newly detected `.pl2` files
-- keeps old rows that are no longer detected and marks them as `detected_in_latest_scan=no`
-- logs non-matching filenames as `warning/skipped`
-
-## Automatic unit_quality_table generation
-
-The skill can now scan each `.pl2` file for neuron variable names and build or update:
-
-- `01_sorting_info/unit_quality_table.xlsx`
-
-Behavior:
-
-- reads `NeuronNames` from each `.pl2` with the `nex` backend
-- assigns `unit01`, `unit02`, ... within each file
-- defaults `include=yes`
-- preserves manual edits in `include`, `exclusion_reason`, `duplicate_of`, `representative_unit`, and `note`
-- appends newly detected units
-- keeps old rows that are no longer detected and marks them as `detected_in_latest_scan=no`
-
-This removes the need to manually copy sorted unit names out of NeuroExplorer for most projects.
-
-## No-light control files
-
-Use:
-
-- `sorted_<file_index>_nolight_<sorted_channels>.pl2`
-
-Behavior:
-
-- full-session rate is still exported
-- no real aligned-rate analysis is generated
-- no pre/light/post summary is computed
-- aligned and pre/post panels are replaced with no-light placeholders
-- PPTX metadata marks the file as `has_light: no`
-
-## Key outputs
+## 关键输出
 
 - `03_nex_exports/fullrate/{file_id}_FullRate_bin1s.csv`
 - `03_nex_exports/aligned_rate/{file_id}_LightAlignedRate_pre60_post85_bin1s.csv`
 - `03_nex_exports/aligned_rate/{file_id}_PreLightPostSummary.csv`
+- `03_nex_exports/time_cluster_aligned_rate/{file_id}_TimeClusterAlignedRate_*.csv`（可选）
 - `07_statistics/all_units_pre_light_post_wide.csv`
 - `07_statistics/all_units_pre_light_post_wide_qc.csv`
 - `07_statistics/all_units_pre_light_post_qc_excluded.csv`
@@ -526,23 +321,32 @@ Behavior:
 - `05_exported_figures/prepost_summary/{file_id}_{unit_id}_PreLightPost.png`
 - `05_exported_figures/summary/{file_id}_Summary_pre60_post85.png`
 - `06_pptx/PSTH_summary_auto.pptx`
+- `03_nex_exports/aligned_rate/unit_cohort.csv` 与 `unit_cohort_metadata.json`
+- `03_nex_exports/time_cluster_aligned_rate/unit_cohort.csv` 与 `unit_cohort_metadata.json`
+- 各分析输出目录中的 `unit_cohort.csv` 与 `unit_cohort_metadata.json`
 
-## Unit-level temporal cluster permutation
+## 单元级时间簇置换
 
-This opt-in branch reads the existing reconstructed
-`03_nex_exports/aligned_rate/*_LightAlignedRate_*.csv` files. It does not
-re-read `.pl2`, call NeuroExplorer, or change the normal figures/PPTX flow.
-Repeated aligned trials are averaged within each `(file_id, unit_id, time)` so
-that one independent unit/channel contributes exactly one sample row.
-
-Enable and configure it in the existing YAML config (all times are seconds):
+这是可选且独立的分支。它读取未修改且包含全部 Unit 的 fullrate CSV，在 `03_nex_exports/time_cluster_aligned_rate/` 生成同样保留全部 Unit 的边界对齐数据，随后在置换入口按 `unit_quality_table` 筛选；不会读取普通 `LightAlignedRate`，也不会改变常规图像、PPTX 或 PreLightPost 流程。重复试次在每个 `(file_id, unit_id, time)` 内先求平均，使每个独立单元只贡献一个样本行。
 
 ```yaml
+time_cluster_aligned_rate:
+  enabled: true
+  output_dir: "03_nex_exports/time_cluster_aligned_rate"
+  window_s: [-60, 300]
+  source_bin_width_s: null
+  bin_width_s: null
+  incomplete_target_bin_policy: "error"
+  require_light_on_on_bin_boundary: false
+  off_boundary_policy: "nearest"
+
 time_cluster_permutation:
   enabled: true
-  analysis_window_s: [-60, 85]
+  input_dir: "03_nex_exports/time_cluster_aligned_rate"
+  input_pattern: "*_TimeClusterAlignedRate_*.csv"
+  analysis_window_s: [-60, 300]
   baseline_window_s: [-60, 0]
-  test_window_s: [5, 20]
+  test_window_s: [0, 300]
   cluster_forming_alpha: 0.05
   cluster_alpha: 0.05
   n_permutations: 10000
@@ -552,90 +356,46 @@ time_cluster_permutation:
   include_in_pptx: false
 ```
 
-If the baseline or test window is omitted, it is inherited through the same
-config loader from `aligned_rate.pre_window_s` or
-`aligned_rate.light_window_s`. Windows are half-open for bin selection:
-`start_s <= time_s < end_s`. Invalid, overlapping, empty, or out-of-range
-windows fail with a readable error.
+`source_bin_width_s: null` 继承普通 `neuroexplorer.fullrate.bin_width_s`；显式设置后，time-cluster 可以读取另一套更细的现有 fullrate CSV，而不改变普通分支。例如普通分支保持 10 秒，专用分支可设 `source_bin_width_s: 1.0` 读取 `*_FullRate_bin1.0s.csv`，再用 `bin_width_s: 30` 聚合。这里的源 fullrate 仍是 NeuroExplorer RateHist 的已分箱输出，并非未分箱脉冲时间戳。
 
-Units with no valid baseline bins or too few configured test bins are excluded
-with a reason in `unit_summary.csv`; partial missing values remain aligned on
-the shared time grid and are handled per bin. Constant traces are retained as
-valid no-change samples. A bin with fewer than two valid units or nonzero mean
-but zero cross-unit variance has an undefined t statistic (`NaN`); an all-zero
-delta bin is reported as `t=0, p=1`. Shifted or irregular unit time grids are
-rejected instead of silently concatenated.
+`bin_width_s: null` 继承源宽度。目标宽度只能是均匀源宽度的整数倍，且必须由连续源分箱完整覆盖；放电率按持续时间加权，部分覆盖会报错。专用分箱定义为 `[kΔ,(k+1)Δ)`，中心为 `(k+0.5)Δ`，因此 0 秒始终是边界。光刺激起点不在源边界时，`nearest` 记录所选边界和偏移，`error` 终止，`interpolate` 因缺少脉冲时间戳而被拒绝。
 
-Run only this analysis after `aligned_rate` outputs exist:
+`incomplete_target_bin_policy: "error"` 是默认安全策略。设置为 `"nan"` 时，覆盖不足的目标 bin 保留真实边界，但 `firing_rate_hz` 为缺失值，并记录实际源分箱数量、覆盖时长和 `incomplete_source_coverage_nan`；不会用部分数据计算伪 30 秒数值。置换分析按 bin 使用有效单元，Heatmap 用独立缺失色显示这些格子。
+
+该分支不继承 `aligned_rate` 窗口。选择规则为 `start_s <= bin_center_s < end_s`。窗口无效、重叠、为空或越界会报错。热图颜色只表示 `delta_rate_hz`，缺失值单独着色，0 秒以边界虚线表示。
+
+无有效 baseline 或 test 分箱不足的单元会在 `unit_summary.csv` 中记录排除原因。有效单元不足两个，或均值非零但方差为零时 t 为 `NaN`；全零差值分箱为 `t=0, p=1`；不规则时间网格直接报错。
 
 ```powershell
-python run_pipeline.py --config config.yaml --module time_cluster_permutation
-# equivalent standalone wrapper
+python build_time_cluster_aligned_rate.py --config config.yaml
 python time_cluster_permutation.py --config config.yaml
+python run_pipeline.py --config config.yaml --module time_cluster_aligned_rate
+python run_pipeline.py --config config.yaml --module time_cluster_permutation
 ```
 
-The test statistic is the across-unit one-sample t statistic of each unit's
-baseline-subtracted firing rate. A permutation flips one sign for the unit's
-entire test-window trace, preserving temporal correlation. Positive and
-negative threshold crossings form separate contiguous clusters; cluster mass
-is the sum of absolute t values, and the null uses the maximum cluster mass per
-sign flip. Small two-sided problems use exact complementary-pair-reduced sign
-enumeration; larger problems use seeded Monte Carlo permutations. Cluster p
-values use the `(1 + exceedances) / (1 + permutations)` correction; the
-unflipped observed assignment is the added class rather than a duplicated null
-draw.
+旧项目必须增加专用配置并重建专用 CSV，不要复制或改名旧 `LightAlignedRate`。置换在每个单元的整个测试曲线上统一翻转符号，正负簇分开形成，簇质量为绝对 t 值之和，p 值采用 `(1 + exceedances) / (1 + permutations)` 校正。
 
-Outputs are isolated under
-`07_statistics/time_cluster_permutation/` (or the configured subdirectory):
+输出位于 `07_statistics/time_cluster_permutation/`，包括 `cluster_table.csv`、`time_bin_statistics.csv`、`unit_time_analysis_matrix.csv`、`unit_summary.csv`、`unit_cohort.csv`、`unit_cohort_metadata.json`、`null_max_cluster_mass.csv`、`analysis_metadata.json` 和三类图像。
 
-- `cluster_table.csv`
-- `time_bin_statistics.csv`
-- `unit_time_analysis_matrix.csv`
-- `unit_summary.csv`
-- `null_max_cluster_mass.csv`
-- `analysis_metadata.json`
-- `figures/unit_time_delta_rate_heatmap.<format>`
-- `figures/population_mean_delta_rate.<format>`
-- `figures/temporal_t_statistic.<format>`
+该分析假设各单元可交换且独立，不建模同一动物或会话内依赖，因此不能自动解释为动物层面推断。簇显著不表示每个分箱独立显著，簇边界也不是精确生理起始时间。当前应保持 `include_in_pptx: false`。
 
-The population curve uncertainty is unit-level SEM. This analysis assumes
-units are exchangeable and independent. Dependence among units from the same
-animal or session is not modeled, so the result is not automatically an
-animal-level population inference. Cluster-level significance also does not
-mean that every time bin is independently significant, and cluster boundaries
-must not be interpreted as exact physiological onset times. The present PPTX
-generator has no isolated plugin interface, so these figures remain standalone
-and `include_in_pptx` should remain `false`.
-
-## PreLightPost statistics QC
-
-Run only the statistics module after aligned-rate CSVs already exist:
+## PreLightPost 统计质控
 
 ```powershell
 python run_pipeline.py --config config.yaml --module prelightpost_stats
 ```
 
-This module reads `03_nex_exports/aligned_rate/*_PreLightPostSummary.csv` only. It does not call NeuroExplorer, generate figures, or build PPTX files.
+该模块只读取 `03_nex_exports/aligned_rate/*_PreLightPostSummary.csv`，不调用 NeuroExplorer、不生成图像、不构建 PPTX，也不重新计算放电率。修改窗口后必须先重新运行 `aligned_rate`。
 
-The statistics module does not recompute firing-rate values. Its numeric source of truth is the existing `PreLightPostSummary.csv`. Those CSVs are produced by `aligned_rate` using the shared `aligned_rate.pre_window_s`, `aligned_rate.light_window_s`, and `aligned_rate.post_window_s` settings, and PPTX/PreLightPost figures display the same summary values and window metadata. `prelightpost_stats` reads the same window config to fill missing window metadata in older Summary CSVs and to warn when existing Summary CSV window metadata differs from the current config. If you change window settings, rerun `aligned_rate` before rerunning `prelightpost_stats`.
+QC 保留同时满足以下条件的行：
 
-The raw wide table is written to `07_statistics/all_units_pre_light_post_wide.csv`. The QC-filtered table is written to `07_statistics/all_units_pre_light_post_wide_qc.csv`, and excluded rows are written to `07_statistics/all_units_pre_light_post_qc_excluded.csv`.
+```text
+max(pre_hz, light_hz, post_hz) >= 0.5 Hz
+total_expected_spikes >= 10
+```
 
-QC keeps rows where `max(pre_hz, light_hz, post_hz) >= 0.5 Hz` and `total_expected_spikes >= 10`. `pre_hz` is an alias of `baseline_hz`; `baseline_hz` remains in the raw columns. No-light controls do not enter `wide_qc` and are recorded in excluded/skipped outputs. `summary_by_file` and `summary_by_condition` outputs are no longer generated.
+`pre_hz` 是 `baseline_hz` 的别名。无光对照不进入 QC 宽表，而是写入排除或跳过输出。当前不再生成 `summary_by_file` 和 `summary_by_condition`。
 
-## Experimental / legacy modes
+## 实验性与旧模式
 
-These are no longer the recommended path and are kept isolated from the default workflow:
-
-- `analysis.mode: neuroexplorer_psth`
-- NeuroExplorer `Light_On` / `Light_Interval` auto-creation
-- `nex.AddInterval` / `nex.AddTimestamp` probes
-- empty `NexVar` creation probes
-- clone-`NexVar` workaround probes
-- GUI automation fallback
-
-These scripts remain under:
-
-- `scripts/smoke_tests/`
-
-Use them only for debugging or local experimentation.
+以下功能仅保留用于调试和本地实验：`analysis.mode: neuroexplorer_psth`、自动创建 `Light_On`/`Light_Interval`、`nex.AddInterval`/`nex.AddTimestamp` 探针、空或克隆 `NexVar` 探针以及 GUI 自动化回退。相关脚本位于 `scripts/smoke_tests/`，不应作为稳定生产流程使用。
