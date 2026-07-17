@@ -32,13 +32,15 @@ session_id, event_name, timestamp
 
 ## NeuroExplorer 导出要求
 
-仓库现有稳定 NeuroExplorer 自动化只验证了 `RateHist_FullSession`，没有可确认的 Unit Train/Event 生产导出格式。因此本分支把 NeuroExplorer 侧定义为隔离的输入契约，未修改既有 RateHist Macro 或默认流程。
+`raster_run.py` 使用 NeuroExplorer Python API 的 `NexDoc.NeuronVars()` 和 `NexVar.Timestamps()` 读取原始 spike timestamps，不应用 RateHist 模板，也不修改既有 RateHist Macro 或默认流程。该适配器已在本机真实 `.pl2` 项目完成一次导出核对。
 
-在 NeuroExplorer 中应分别导出：
+自动导出要求项目已有：
 
-1. 选定 neuron/unit 的原始 spike timestamps，并附带 recording/session 和 unit identity。
-2. 配置指定事件名的全部 occurrence timestamps，并附带相同 session identity。
-3. 将字段整理为上述确定 long CSV，确认分隔符、header 和时间单位与 YAML 完全一致。
+1. `00_raw_pl2/*.pl2`。
+2. `02_stim_events/stim_schedule_master.xlsx`，含 file、alignment event 和刺激持续时间。
+3. `01_sorting_info/unit_quality_table.xlsx`，含 `original_name`、`unit_id` 和 `include`。
+
+只有字面值 `include=yes` 的 unit 会导出。无 alignment event 的 recording 会进入 NeuroExplorer export manifest 的 exclusions。导出时间单位固定为秒，输入写入 `03_nex_exports/raster_input/`。
 
 不要提交真实 `.pl2`、大型导出文件或批量 raster 图片。
 
@@ -67,6 +69,7 @@ input:
     event_name: "event_name"
     event_time: "timestamp"
     trial_id: null
+    stimulus_duration: "stimulus_duration_s"
 alignment:
   event_name: "Light_On"
   window_s: [-120.0, 360.0]
@@ -86,6 +89,9 @@ plot:
   formats: ["png"]
   dpi: 300
   figsize_inches: [10.0, 6.0]
+  combined_width_inches: 12.0
+  combined_row_height_inches: 0.45
+  combined_min_height_inches: 4.0
   spike_color: "black"
   spike_linewidth: 0.6
   spike_height_fraction: 0.8
@@ -94,6 +100,10 @@ plot:
   show_alignment_line: true
   transparent_background: false
 output:
+  write_individual_figures: true
+  write_combined_figure: true
+  combined_filename: "project_combined_raster"
+  write_combined_row_map_csv: true
   write_trial_summary_csv: true
   write_unit_summary_csv: true
   write_exclusion_csv: true
@@ -105,11 +115,21 @@ runtime:
   continue_on_unit_error: true
 ```
 
-`light_off_event_name` 当前保留为契约字段但尚未实现逐 trial off-event 配对；保持为 `null`。只有明确设置正数 `fixed_stimulus_duration_s` 时才画固定刺激区间，否则只画 `x=0` 事件线。
+Event 表的 `stimulus_duration_s` 优先控制每个 trial 的真实光照终点。所有光照带均从相对时间 `t=0` 开始，因此持续时间不同的 unit/trial 仍保持 onset 对齐。缺少逐 trial 时长时才回退到正数 `fixed_stimulus_duration_s`。`light_off_event_name` 当前保留为契约字段但尚未实现逐 trial off-event 配对，应保持为 `null`。
 
 ## 运行
 
-先校验配置和输入，再正式生成：
+标准项目的一键入口：
+
+```powershell
+python raster_run.py --project-dir "D:\Data\my_ephys_project" --init-only
+python raster_run.py --project-dir "D:\Data\my_ephys_project"
+python raster_run.py --project-dir "D:\Data\my_ephys_project" --overwrite
+```
+
+第一条只初始化独立配置和输入目录；第二条完成 NeuroExplorer 导出与全部输出；第三条用于显式覆盖重跑。无需主 `config.yaml`。如已有符合契约的 CSV，可使用 `--skip-export`。
+
+仅运行解析/绘图时，先校验配置和输入，再正式生成：
 
 ```powershell
 python raster_plot.py --config config/raster_config.yaml --validate-only
@@ -131,6 +151,8 @@ python raster_plot.py --config config/raster_config.yaml
 ```text
 <output_root>/raster/
 ├── figures/<session_id>/<unit_id>_raster.png
+├── figures/project_combined_raster.png
+├── tables/combined_row_map.csv
 ├── tables/unit_summary.csv
 ├── tables/trial_summary.csv
 ├── tables/exclusions.csv
@@ -139,11 +161,13 @@ python raster_plot.py --config config/raster_config.yaml
 └── raster.log
 ```
 
-summary 记录源 spike/event 文件、trial/spike 数、空 trial、状态和图路径。manifest 记录解析后配置、输入到 session 映射、单位换算、边界/重叠策略、原始 ID 到安全文件名的图映射、软件版本、git commit、QC 计数与警告。表格、manifest、日志和图片均采用临时文件替换方式写入。
+combined 图中所有 unit 共用相对时间横轴，按稳定的 `session × unit` 顺序自上而下排列；多 trial unit 使用连续子行，并在 unit 中点显示一个标签。`combined_row_map.csv` 记录每个图行对应的 session、unit、trial、事件时间、刺激持续时间和 spike 数。
+
+summary 记录源 spike/event 文件、trial/spike 数、空 trial、状态和图路径。manifest 记录解析后配置、输入到 session 映射、单位换算、边界/重叠策略、combined 路径、原始 ID 到安全文件名的图映射、软件版本、git commit、QC 计数与警告。表格、manifest、日志和图片均采用临时文件替换方式写入。
 
 ## 真实数据人工验收
 
-当前没有可提交的真实 NeuroExplorer Unit Train/Event 样例，生产使用前必须完成一次人工核对：
+新项目首次使用时仍应完成一次人工核对：
 
 1. 任选一个 unit，确认 NeuroExplorer 总 spike 数与 `unit_summary.csv` 一致。
 2. 任选 2–3 个事件，手算若干 `spike - event` 并与可选 `aligned_spikes_long.csv` 对照。

@@ -286,10 +286,23 @@ python run_pipeline.py --config config.yaml --module neuroexplorer_export
 
 Raster 不由 `run_pipeline.py` 自动触发，也不读取主 `config.yaml`。先从 NeuroExplorer 导出包含 `session_id`、`unit_id`、可选 `channel_id` 和 spike `timestamp` 的 long CSV，再单独导出包含 `session_id`、`event_name` 和 event `timestamp` 的 Event CSV。两类时间戳必须使用 `config/raster_config.yaml` 声明的同一原始单位。
 
+完整低 agent 项目入口：
+
 ```powershell
-python raster_plot.py --config config/raster_config.yaml --validate-only
-python raster_plot.py --config config/raster_config.yaml
-python raster_plot.py --config config/raster_config.yaml --session session-A --unit unit-1
+python raster_run.py --project-dir "D:\Data\my_ephys_project" --init-only
+python raster_run.py --project-dir "D:\Data\my_ephys_project"
+python raster_run.py --project-dir "D:\Data\my_ephys_project" --overwrite
+python raster_run.py --project-dir "D:\Data\my_ephys_project" --skip-export --validate-only
 ```
 
-找不到输入、字段缺失、时间单位非法、缺少指定事件、禁止的窗口重叠或 `overwrite: false` 冲突时，命令以非零状态结束。`fail_on_empty_unit: false` 默认为空 unit 输出保留所有 trial 的空图；设为 `true` 时写入 exclusions。完整说明与真实 NeuroExplorer 人工验收清单见 `docs/raster_plots.md`。
+第一条只创建独立 `raster_config.yaml` 和 `03_nex_exports/raster_input/`。第二条首次运行时读取 `stim_schedule_master.xlsx`、`unit_quality_table.xlsx` 和 `00_raw_pl2/*.pl2`，通过 NeuroExplorer 导出 `include=yes` unit 的原始 timestamps，再完成全部图表。已有输入或输出不会静默覆盖；重复运行用 `--overwrite`。
+
+只运行 CSV 对齐/绘图入口：
+
+```powershell
+python raster_plot.py --config raster_config.yaml --validate-only
+python raster_plot.py --config raster_config.yaml
+python raster_plot.py --config raster_config.yaml --session session-A --unit unit-1
+```
+
+找不到输入、字段缺失、时间单位非法、缺少指定事件、禁止的窗口重叠或 `overwrite: false` 冲突时，命令以非零状态结束。输出同时包含 individual raster 和 `project_combined_raster.png`；combined 图按 `session × unit` 自上而下排列，多 trial unit 使用相邻子行，`combined_row_map.csv` 保存逐行映射。各 trial 的光照带都从 `t=0` 起，终点读取 Event 表的 `stimulus_duration_s`。完整说明见 `docs/raster_plots.md`。

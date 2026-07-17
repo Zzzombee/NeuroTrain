@@ -21,9 +21,11 @@ from scripts.raster_pipeline import (
     load_raster_config,
     load_spike_table,
     main,
+    render_combined_raster,
     render_raster,
     run_raster_pipeline,
 )
+from scripts.raster_project import initialize_raster_project, run_project_raster
 
 
 def make_config(
@@ -54,6 +56,7 @@ def make_config(
                 "event_name": "event_name",
                 "event_time": "timestamp",
                 "trial_id": None,
+                "stimulus_duration": "stimulus_duration_s",
             },
         },
         alignment={
@@ -74,6 +77,9 @@ def make_config(
             "alignment_linewidth": 1.0,
             "show_alignment_line": True,
             "transparent_background": False,
+            "combined_width_inches": 5.0,
+            "combined_row_height_inches": 0.5,
+            "combined_min_height_inches": 3.0,
         },
         output={
             "write_trial_summary_csv": True,
@@ -81,6 +87,10 @@ def make_config(
             "write_exclusion_csv": True,
             "write_aligned_spikes_long_csv": False,
             "write_manifest_json": True,
+            "write_individual_figures": True,
+            "write_combined_figure": True,
+            "combined_filename": "project_combined_raster",
+            "write_combined_row_map_csv": True,
             "overwrite": overwrite,
         },
         runtime={"fail_on_empty_unit": False, "continue_on_unit_error": True},
@@ -104,6 +114,7 @@ def write_tables(config: RasterConfig) -> tuple[Path, Path]:
             "session_id": ["session-A", "session-A"],
             "event_name": ["Light_On", "Light_On"],
             "timestamp": [10.0, 20.0],
+            "stimulus_duration_s": [2.0, 3.0],
         }
     ).to_csv(event_path, index=False)
     return spike_path, event_path
@@ -273,9 +284,10 @@ class RasterPipelineTests(unittest.TestCase):
 
             raster_root = config.paths.raster_root
             pngs = sorted((raster_root / "figures").glob("**/*.png"))
-            self.assertEqual(len(pngs), 2)
+            self.assertEqual(len(pngs), 3)
             self.assertTrue(all(path.stat().st_size > 0 for path in pngs))
-            self.assertEqual(summary["figures_written"], 2)
+            self.assertEqual(summary["figures_written"], 3)
+            self.assertEqual(summary["combined_figures_written"], 1)
             self.assertTrue((raster_root / "tables" / "unit_summary.csv").exists())
             self.assertTrue((raster_root / "tables" / "trial_summary.csv").exists())
             self.assertTrue((raster_root / "tables" / "exclusions.csv").exists())
@@ -283,9 +295,116 @@ class RasterPipelineTests(unittest.TestCase):
             self.assertEqual(manifest["alignment"]["boundary"], "left_closed_right_open")
             self.assertEqual(manifest["trial_axis_order"], "trial 1 at top")
             self.assertEqual(len(manifest["figure_mappings"]), 2)
+            self.assertTrue(Path(manifest["outputs"]["combined_figure"]).exists())
+            row_map = pd.read_csv(raster_root / "tables" / "combined_row_map.csv")
+            self.assertEqual(row_map["session_id"].tolist(), ["session-A"] * 4)
+            self.assertEqual(row_map["stimulus_duration_s"].tolist(), [2.0, 3.0, 2.0, 3.0])
             self.assertEqual(plt.get_fignums(), [])
             with self.assertRaisesRegex(RasterInputError, "output.overwrite=false"):
                 run_raster_pipeline(config)
+
+    def test_combined_raster_orders_units_and_draws_per_row_durations(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config = make_config(Path(tmp))
+            trials = pd.DataFrame(
+                {
+                    "session_id": ["s2", "s1"],
+                    "unit_id": ["u2", "u1"],
+                    "trial_id": ["t2", "t1"],
+                    "trial_index": [1, 1],
+                    "event_time_absolute_s": [10.0, 10.0],
+                    "stimulus_duration_s": [0.8, 0.4],
+                    "source_event_file": ["events.csv", "events.csv"],
+                    "n_spikes_in_window": [1, 1],
+                    "overlaps_another_trial_window": [False, False],
+                }
+            )
+            aligned = pd.DataFrame(
+                {
+                    "session_id": ["s2", "s1"],
+                    "unit_id": ["u2", "u1"],
+                    "trial_id": ["t2", "t1"],
+                    "spike_time_relative_s": [0.2, -0.2],
+                }
+            )
+            output = Path(tmp) / "combined"
+            with patch("scripts.raster_pipeline.plt.close"):
+                written, row_map = render_combined_raster(aligned, trials, config, output)
+                figure = plt.figure(plt.get_fignums()[-1])
+                axis = figure.axes[0]
+                self.assertEqual([label.get_text() for label in axis.get_yticklabels()], ["s1 | u1", "s2 | u2"])
+                self.assertEqual([rectangle.get_width() for rectangle in axis.patches], [0.4, 0.8])
+                self.assertEqual(row_map["session_id"].tolist(), ["s1", "s2"])
+                self.assertTrue(written[0].exists())
+            plt.close("all")
+
+    def test_low_agent_project_run_initializes_exports_and_plots(self) -> None:
+        class FakeVar:
+            def __init__(self, name: str, timestamps: list[float]):
+                self._name = name
+                self._timestamps = timestamps
+
+            def Name(self):
+                return self._name
+
+            def Timestamps(self):
+                return self._timestamps
+
+        class FakeDoc:
+            def __init__(self, timestamps: list[float]):
+                self._timestamps = timestamps
+
+            def NeuronVars(self):
+                return [FakeVar("SPK01a", self._timestamps)]
+
+        class FakeNex:
+            @staticmethod
+            def OpenDocument(path: str):
+                return FakeDoc([9.5, 10.0, 10.5] if "01" in Path(path).name else [19.5, 20.0])
+
+            @staticmethod
+            def CloseDocument(_doc):
+                return None
+
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            (project / "00_raw_pl2").mkdir()
+            for name in ["sorted_01.pl2", "sorted_02.pl2"]:
+                (project / "00_raw_pl2" / name).touch()
+            (project / "02_stim_events").mkdir()
+            pd.DataFrame(
+                {
+                    "file_id": [1, 2],
+                    "pl2_file": ["sorted_01.pl2", "sorted_02.pl2"],
+                    "has_light": ["yes", "yes"],
+                    "light_on_s": [10.0, 20.0],
+                    "duration_s": [0.4, 0.8],
+                }
+            ).to_excel(project / "02_stim_events" / "stim_schedule_master.xlsx", index=False)
+            (project / "01_sorting_info").mkdir()
+            pd.DataFrame(
+                {
+                    "file_id": ["01", "02"],
+                    "unit_id": ["unit01", "unit01"],
+                    "channel": [1, 1],
+                    "original_name": ["SPK01a", "SPK01a"],
+                    "include": ["yes", "yes"],
+                }
+            ).to_excel(project / "01_sorting_info" / "unit_quality_table.xlsx", index=False)
+
+            config_path, created = initialize_raster_project(project)
+            self.assertTrue(created)
+            self.assertTrue(config_path.exists())
+            self.assertFalse((project / "config.yaml").exists())
+            result = run_project_raster(project, nex_module=FakeNex)
+
+            self.assertEqual(result["export"]["counts"]["units"], 2)
+            self.assertEqual(result["export"]["counts"]["spikes"], 5)
+            self.assertEqual(result["raster"]["combined_figures_written"], 1)
+            raster_root = project / "03_nex_exports" / "raster"
+            self.assertTrue((raster_root / "figures" / "project_combined_raster.png").exists())
+            events = pd.read_csv(project / "03_nex_exports" / "raster_input" / "alignment_events.csv")
+            self.assertEqual(events["stimulus_duration_s"].tolist(), [0.4, 0.8])
 
 
 if __name__ == "__main__":

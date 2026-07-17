@@ -19,6 +19,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import pandas as pd
 import yaml
+from matplotlib.patches import Rectangle
 
 
 SUPPORTED_SCHEMA_VERSION = 1
@@ -184,9 +185,16 @@ def load_raster_config(config_path: Path) -> RasterConfig:
         raise RasterConfigError(f"Config key plot.figsize_inches must be [width, height]; got {figsize!r}.")
     _require_positive_number(figsize[0], "plot.figsize_inches[0]")
     _require_positive_number(figsize[1], "plot.figsize_inches[1]")
+    _require_positive_number(plot_raw.get("combined_width_inches", figsize[0]), "plot.combined_width_inches")
+    _require_positive_number(plot_raw.get("combined_row_height_inches", 0.45), "plot.combined_row_height_inches")
+    _require_positive_number(plot_raw.get("combined_min_height_inches", 4.0), "plot.combined_min_height_inches")
     _require_positive_number(plot_raw.get("spike_linewidth", 0.6), "plot.spike_linewidth")
     _require_positive_number(plot_raw.get("spike_height_fraction", 0.8), "plot.spike_height_fraction")
     _require_positive_number(plot_raw.get("alignment_linewidth", 1.0), "plot.alignment_linewidth")
+    if output_raw.get("write_combined_figure", True) and not str(
+        output_raw.get("combined_filename", "project_combined_raster")
+    ).strip():
+        raise RasterConfigError("Config key output.combined_filename must be non-empty when combined output is enabled.")
 
     include_ids = trial_filter_raw.get("include_trial_ids")
     exclude_ids = trial_filter_raw.get("exclude_trial_ids") or []
@@ -296,7 +304,26 @@ def load_event_table(path: Path, config: RasterConfig) -> pd.DataFrame:
         result["trial_id"] = result[trial_col].fillna("").astype(str).str.strip()
     else:
         result["trial_id"] = ""
-    return result[["session_id", "event_name", "event_time_absolute_s", "trial_id", "_source_file"]].sort_values(
+    duration_col = columns.get("stimulus_duration")
+    if duration_col and duration_col in result.columns:
+        duration_numeric = pd.to_numeric(result[duration_col], errors="coerce")
+        invalid_duration = (
+            duration_numeric.isna()
+            & result[duration_col].notna()
+            & (result[duration_col].astype(str).str.strip() != "")
+        )
+        if invalid_duration.any():
+            examples = result.loc[invalid_duration, duration_col].head(3).tolist()
+            raise RasterInputError(f"Non-numeric stimulus durations in {path}: {examples!r}")
+        finite_duration = duration_numeric.dropna().map(math.isfinite)
+        if not finite_duration.all() or (duration_numeric.dropna() <= 0).any():
+            raise RasterInputError(f"Stimulus durations must be positive finite values in {path}.")
+        result["stimulus_duration_s"] = duration_numeric.astype(float) * scale
+    else:
+        result["stimulus_duration_s"] = float("nan")
+    return result[
+        ["session_id", "event_name", "event_time_absolute_s", "trial_id", "stimulus_duration_s", "_source_file"]
+    ].sort_values(
         ["session_id", "event_name", "event_time_absolute_s"], kind="mergesort"
     )
 
@@ -361,6 +388,7 @@ def build_trials(events: pd.DataFrame, config: RasterConfig) -> pd.DataFrame:
     for session_id, sub in selected.groupby("session_id", sort=False):
         for idx, (_, row) in enumerate(sub.iterrows(), start=1):
             trial_id = row["trial_id"] or f"{session_id}_trial{idx:04d}"
+            event_duration = row.get("stimulus_duration_s")
             generated.append(
                 {
                     "session_id": session_id,
@@ -368,6 +396,11 @@ def build_trials(events: pd.DataFrame, config: RasterConfig) -> pd.DataFrame:
                     "trial_index": idx,
                     "event_name": row["event_name"],
                     "event_time_absolute_s": float(row["event_time_absolute_s"]),
+                    "stimulus_duration_s": (
+                        float(event_duration)
+                        if event_duration is not None and pd.notna(event_duration)
+                        else config.alignment.get("fixed_stimulus_duration_s")
+                    ),
                     "source_event_file": row["_source_file"],
                 }
             )
@@ -430,6 +463,7 @@ def align_unit_spikes(spikes: pd.DataFrame, trials: pd.DataFrame, config: Raster
                             "trial_index": int(trial.trial_index),
                             "event_name": trial.event_name,
                             "event_time_absolute_s": float(trial.event_time_absolute_s),
+                            "stimulus_duration_s": trial.stimulus_duration_s,
                             "spike_time_absolute_s": spike_time,
                             "spike_time_relative_s": relative,
                         }
@@ -441,6 +475,7 @@ def align_unit_spikes(spikes: pd.DataFrame, trials: pd.DataFrame, config: Raster
                     "trial_id": trial.trial_id,
                     "trial_index": int(trial.trial_index),
                     "event_time_absolute_s": float(trial.event_time_absolute_s),
+                    "stimulus_duration_s": trial.stimulus_duration_s,
                     "source_event_file": trial.source_event_file,
                     "n_spikes_in_window": n_spikes,
                     "overlaps_another_trial_window": bool(trial.overlaps_another_trial_window),
@@ -474,11 +509,46 @@ def _atomic_write_csv(df: pd.DataFrame, path: Path) -> None:
     tmp_path.replace(path)
 
 
-def _stimulus_interval(config: RasterConfig) -> tuple[float, float] | None:
-    duration = config.alignment.get("fixed_stimulus_duration_s")
-    if duration is not None:
-        return 0.0, float(duration)
-    return None
+def _add_stimulus_rectangles(ax, rows: pd.DataFrame, y_column: str, plot_cfg: dict[str, Any]) -> None:
+    color = plot_cfg.get("stimulus_band_color", "#B7C9E8")
+    alpha = float(plot_cfg.get("stimulus_band_alpha", 0.25))
+    for row in rows.itertuples(index=False):
+        duration = getattr(row, "stimulus_duration_s", None)
+        if duration is None or pd.isna(duration):
+            continue
+        y_position = float(getattr(row, y_column))
+        ax.add_patch(
+            Rectangle(
+                (0.0, y_position - 0.5),
+                float(duration),
+                1.0,
+                facecolor=color,
+                edgecolor="none",
+                alpha=alpha,
+                zorder=0,
+            )
+        )
+
+
+def _save_figure(fig, output_base: Path, config: RasterConfig) -> list[Path]:
+    output_paths = []
+    for fmt in config.plot.get("formats", ["png"]):
+        path = output_base.with_suffix(f".{fmt}")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with NamedTemporaryFile(delete=False, dir=path.parent, suffix=f".{fmt}.tmp") as handle:
+            tmp_path = Path(handle.name)
+        try:
+            fig.savefig(
+                tmp_path,
+                format=fmt,
+                dpi=int(config.plot.get("dpi", 300)),
+                transparent=bool(config.plot.get("transparent_background", False)),
+            )
+            tmp_path.replace(path)
+        finally:
+            tmp_path.unlink(missing_ok=True)
+        output_paths.append(path)
+    return output_paths
 
 
 def render_raster(
@@ -489,7 +559,6 @@ def render_raster(
 ) -> list[Path]:
     plot_cfg = config.plot
     start, end = map(float, config.alignment["window_s"])
-    output_paths = []
     trial_indices = unit_trials["trial_index"].astype(int).tolist()
     spike_groups = [
         unit_aligned.loc[unit_aligned["trial_index"] == trial_index, "spike_time_relative_s"].astype(float).tolist()
@@ -502,12 +571,16 @@ def render_raster(
         linelengths=float(plot_cfg.get("spike_height_fraction", 0.8)),
         linewidths=float(plot_cfg.get("spike_linewidth", 0.6)),
         colors=plot_cfg.get("spike_color", "black"),
+        zorder=2,
     )
+    _add_stimulus_rectangles(ax, unit_trials, "trial_index", plot_cfg)
     if plot_cfg.get("show_alignment_line", True):
-        ax.axvline(0, color=plot_cfg.get("alignment_line_color", "red"), linewidth=float(plot_cfg.get("alignment_linewidth", 1.0)))
-    interval = _stimulus_interval(config)
-    if interval is not None:
-        ax.axvspan(interval[0], interval[1], color=plot_cfg.get("stimulus_band_color", "#B7C9E8"), alpha=float(plot_cfg.get("stimulus_band_alpha", 0.25)))
+        ax.axvline(
+            0,
+            color=plot_cfg.get("alignment_line_color", "red"),
+            linewidth=float(plot_cfg.get("alignment_linewidth", 1.0)),
+            zorder=3,
+        )
     ax.set_xlim(start, end)
     ax.set_ylim(0.5, max(trial_indices, default=1) + 0.5)
     ax.set_yticks(trial_indices)
@@ -523,25 +596,88 @@ def render_raster(
         )
         ax.set_title(title)
     fig.tight_layout()
-    for fmt in plot_cfg.get("formats", ["png"]):
-        path = output_base.with_suffix(f".{fmt}")
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with NamedTemporaryFile(delete=False, dir=path.parent, suffix=f".{fmt}.tmp") as handle:
-            tmp_path = Path(handle.name)
-        try:
-            fig.savefig(
-                tmp_path,
-                format=fmt,
-                dpi=int(plot_cfg.get("dpi", 300)),
-                transparent=bool(plot_cfg.get("transparent_background", False)),
-            )
-            tmp_path.replace(path)
-        finally:
-            tmp_path.unlink(missing_ok=True)
-        output_paths.append(path)
+    output_paths = _save_figure(fig, output_base, config)
     plt.close(fig)
     return output_paths
+
+
+def render_combined_raster(
+    aligned: pd.DataFrame,
+    trial_summary: pd.DataFrame,
+    config: RasterConfig,
+    output_base: Path,
+) -> tuple[list[Path], pd.DataFrame]:
+    plot_cfg = config.plot
+    start, end = map(float, config.alignment["window_s"])
+    row_records = []
+    y_position = 1
+    unit_ticks = []
+    unit_labels = []
+    for (session_id, unit_id), unit_trials in trial_summary.groupby(["session_id", "unit_id"], sort=True):
+        unit_positions = []
+        for trial in unit_trials.sort_values("trial_index", kind="mergesort").itertuples(index=False):
+            unit_positions.append(y_position)
+            row_records.append(
+                {
+                    "plot_row": y_position,
+                    "session_id": session_id,
+                    "unit_id": unit_id,
+                    "trial_id": trial.trial_id,
+                    "trial_index": int(trial.trial_index),
+                    "event_time_absolute_s": float(trial.event_time_absolute_s),
+                    "stimulus_duration_s": trial.stimulus_duration_s,
+                    "n_spikes_in_window": int(trial.n_spikes_in_window),
+                }
+            )
+            y_position += 1
+        unit_ticks.append(sum(unit_positions) / len(unit_positions))
+        unit_labels.append(f"{session_id} | {unit_id}")
+
+    row_map = pd.DataFrame(row_records)
+    spike_groups = []
+    for row in row_map.itertuples(index=False):
+        if aligned.empty:
+            spike_groups.append([])
+            continue
+        mask = (
+            (aligned["session_id"] == row.session_id)
+            & (aligned["unit_id"] == row.unit_id)
+            & (aligned["trial_id"] == row.trial_id)
+        )
+        spike_groups.append(aligned.loc[mask, "spike_time_relative_s"].astype(float).tolist())
+
+    figure_width = float(plot_cfg.get("combined_width_inches", plot_cfg.get("figsize_inches", [10.0, 6.0])[0]))
+    row_height = float(plot_cfg.get("combined_row_height_inches", 0.45))
+    minimum_height = float(plot_cfg.get("combined_min_height_inches", 4.0))
+    figure_height = max(minimum_height, len(row_map) * row_height + 1.8)
+    fig, ax = plt.subplots(figsize=(figure_width, figure_height))
+    ax.eventplot(
+        spike_groups,
+        lineoffsets=row_map["plot_row"].tolist(),
+        linelengths=float(plot_cfg.get("spike_height_fraction", 0.8)),
+        linewidths=float(plot_cfg.get("spike_linewidth", 0.6)),
+        colors=plot_cfg.get("spike_color", "black"),
+        zorder=2,
+    )
+    _add_stimulus_rectangles(ax, row_map, "plot_row", plot_cfg)
+    if plot_cfg.get("show_alignment_line", True):
+        ax.axvline(
+            0,
+            color=plot_cfg.get("alignment_line_color", "red"),
+            linewidth=float(plot_cfg.get("alignment_linewidth", 1.0)),
+            zorder=3,
+        )
+    ax.set_xlim(start, end)
+    ax.set_ylim(0.5, max(row_map["plot_row"].tolist(), default=1) + 0.5)
+    ax.set_yticks(unit_ticks, labels=unit_labels)
+    ax.invert_yaxis()
+    ax.set_xlabel(plot_cfg.get("x_label", "Time from event (s)"))
+    ax.set_ylabel(plot_cfg.get("combined_y_label", "Session | Unit"))
+    ax.set_title(plot_cfg.get("combined_title", f"Project raster | aligned to {config.alignment['event_name']}"))
+    fig.tight_layout()
+    output_paths = _save_figure(fig, output_base, config)
+    plt.close(fig)
+    return output_paths, row_map
 
 
 def _check_output_conflicts(config: RasterConfig, paths: list[Path]) -> None:
@@ -578,6 +714,9 @@ def run_raster_pipeline(config: RasterConfig, *, validate_only: bool = False, se
     trial_summary_path = table_root / "trial_summary.csv"
     exclusions_path = table_root / "exclusions.csv"
     aligned_long_path = table_root / "aligned_spikes_long.csv"
+    combined_row_map_path = table_root / "combined_row_map.csv"
+    combined_filename = str(config.output.get("combined_filename", "project_combined_raster"))
+    combined_base = figure_root / _safe_filename(combined_filename)
 
     expected_outputs = [log_path]
     if config.output.get("write_manifest_json", True):
@@ -590,10 +729,16 @@ def run_raster_pipeline(config: RasterConfig, *, validate_only: bool = False, se
         expected_outputs.append(exclusions_path)
     if config.output.get("write_aligned_spikes_long_csv", False):
         expected_outputs.append(aligned_long_path)
-    for (session_id, unit_id), _unit_spikes in spikes.groupby(["session_id", "unit_id"], sort=True):
-        safe_base = figure_root / _safe_filename(session_id) / f"{_safe_filename(unit_id)}_raster"
+    if config.output.get("write_combined_row_map_csv", True):
+        expected_outputs.append(combined_row_map_path)
+    if config.output.get("write_combined_figure", True):
         for fmt in config.plot.get("formats", ["png"]):
-            expected_outputs.append(safe_base.with_suffix(f".{fmt}"))
+            expected_outputs.append(combined_base.with_suffix(f".{fmt}"))
+    if config.output.get("write_individual_figures", True):
+        for (session_id, unit_id), _unit_spikes in spikes.groupby(["session_id", "unit_id"], sort=True):
+            safe_base = figure_root / _safe_filename(session_id) / f"{_safe_filename(unit_id)}_raster"
+            for fmt in config.plot.get("formats", ["png"]):
+                expected_outputs.append(safe_base.with_suffix(f".{fmt}"))
     if validate_only:
         return {
             "sessions": int(spikes["session_id"].nunique()),
@@ -618,7 +763,7 @@ def run_raster_pipeline(config: RasterConfig, *, validate_only: bool = False, se
             status = "excluded"
             exclusion_reason = "empty_unit_in_alignment_window"
             exclusions.append({"session_id": session_id, "unit_id": unit_id, "reason": exclusion_reason})
-        else:
+        elif config.output.get("write_individual_figures", True):
             safe_base = figure_root / _safe_filename(session_id) / f"{_safe_filename(unit_id)}_raster"
             try:
                 written = render_raster(unit_aligned, unit_trials, config, safe_base)
@@ -651,6 +796,13 @@ def run_raster_pipeline(config: RasterConfig, *, validate_only: bool = False, se
 
     unit_summary = pd.DataFrame(unit_rows)
     exclusions_df = pd.DataFrame(exclusions, columns=["session_id", "unit_id", "reason"])
+    successful_units = unit_summary.loc[unit_summary["status"] == "success", ["session_id", "unit_id"]]
+    combined_trials = trial_summary.merge(successful_units, on=["session_id", "unit_id"], how="inner")
+    combined_paths: list[Path] = []
+    combined_row_map = pd.DataFrame()
+    if config.output.get("write_combined_figure", True) and not combined_trials.empty:
+        combined_paths, combined_row_map = render_combined_raster(aligned, combined_trials, config, combined_base)
+        figure_count += len(combined_paths)
     if config.output.get("write_unit_summary_csv", True):
         _atomic_write_csv(unit_summary, unit_summary_path)
     if config.output.get("write_trial_summary_csv", True):
@@ -659,6 +811,8 @@ def run_raster_pipeline(config: RasterConfig, *, validate_only: bool = False, se
         _atomic_write_csv(exclusions_df, exclusions_path)
     if config.output.get("write_aligned_spikes_long_csv", False):
         _atomic_write_csv(aligned, aligned_long_path)
+    if config.output.get("write_combined_row_map_csv", True):
+        _atomic_write_csv(combined_row_map, combined_row_map_path)
 
     manifest = {
         "schema_version": config.schema_version,
@@ -691,6 +845,11 @@ def run_raster_pipeline(config: RasterConfig, *, validate_only: bool = False, se
             "trials": int(trials.shape[0]),
             "overlapping_trial_windows": int(trials["overlaps_another_trial_window"].sum()),
             "figures_written": int(figure_count),
+            "individual_figures_written": int(
+                unit_summary["figure_path"].astype(str).str.strip().ne("").sum()
+                * len(config.plot.get("formats", ["png"]))
+            ),
+            "combined_figures_written": int(len(combined_paths)),
             "aligned_spikes": int(aligned.shape[0]),
             "duplicate_spike_timestamps": int(
                 spikes.duplicated(["session_id", "unit_id", "spike_time_absolute_s"], keep=False).sum()
@@ -702,6 +861,8 @@ def run_raster_pipeline(config: RasterConfig, *, validate_only: bool = False, se
         ].to_dict(orient="records"),
         "outputs": {
             "figures_dir": str(figure_root),
+            "combined_figure": str(combined_paths[0]) if combined_paths else None,
+            "combined_row_map_csv": str(combined_row_map_path),
             "unit_summary_csv": str(unit_summary_path),
             "trial_summary_csv": str(trial_summary_path),
             "exclusions_csv": str(exclusions_path),
@@ -717,7 +878,9 @@ def run_raster_pipeline(config: RasterConfig, *, validate_only: bool = False, se
             "matplotlib": matplotlib.__version__,
         },
         "run_time": datetime.now().isoformat(timespec="seconds"),
-        "warnings": ["NeuroExplorer Unit Train/Event export adapter is an input contract; validate with real exports before production use."],
+        "warnings": [
+            "Automatic NeuroExplorer export reads raw NexVar.Timestamps(); manually validate counts and event alignment for each new project."
+        ],
     }
     if config.output.get("write_manifest_json", True):
         _atomic_write_text(manifest_path, json.dumps(manifest, indent=2, ensure_ascii=False))

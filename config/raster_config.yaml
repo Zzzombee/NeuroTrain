@@ -20,6 +20,7 @@ input:
     event_name: "event_name"
     event_time: "timestamp"
     trial_id: null
+    stimulus_duration: "stimulus_duration_s"
 
 alignment:
   event_name: "Light_On"
@@ -42,6 +43,9 @@ plot:
   formats: ["png"]
   dpi: 300
   figsize_inches: [10.0, 6.0]
+  combined_width_inches: 12.0
+  combined_row_height_inches: 0.45
+  combined_min_height_inches: 4.0
   spike_color: "black"
   spike_linewidth: 0.6
   spike_height_fraction: 0.8
@@ -51,9 +55,15 @@ plot:
   title_template: "{session_id} | {unit_id} | aligned to {event_name}"
   x_label: "Time from event (s)"
   y_label: "Trial"
+  combined_y_label: "Session | Unit"
+  combined_title: "Project raster | aligned to Light_On"
   transparent_background: false
 
 output:
+  write_individual_figures: true
+  write_combined_figure: true
+  combined_filename: "project_combined_raster"
+  write_combined_row_map_csv: true
   write_trial_summary_csv: true
   write_unit_summary_csv: true
   write_exclusion_csv: true

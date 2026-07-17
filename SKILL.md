@@ -71,6 +71,8 @@ The older direct NeuroExplorer PSTH route is experimental fallback only.
 - PPTX build: `build_pptx.py`
 - Pre/light/post statistics export: `scripts/build_prelightpost_statistics.py`
 - Unit-level temporal cluster permutation: `scripts/time_cluster_permutation.py`
+- Complete raw-spike raster project run: `raster_run.py`
+- Existing raster CSV plotting only: `raster_plot.py`
 - Command reference: `HELP.md`
 - Detailed usage: `docs/usage.md`
 
@@ -92,6 +94,7 @@ python run_pipeline.py --config config.yaml
 
 ```powershell
 python run_pipeline.py --config config.yaml --module prelightpost_stats
+python raster_run.py --project-dir "D:\Data\my_ephys_project"
 ```
 
 ## Submodule Commands
@@ -155,6 +158,9 @@ python run_pipeline.py --config config.yaml --module prelightpost_stats
 - Terminal-only normal branch: `python build_aligned_rate_from_fullrate.py --config config.yaml`.
 - Terminal-only time-cluster branch: first `python build_time_cluster_aligned_rate.py --config config.yaml`, then `python time_cluster_permutation.py --config config.yaml`.
 - Temporal cluster results are unit-level inferences. They do not model within-animal/session dependence, make each bin independently significant, or define exact physiological onset boundaries.
+- Raw-spike raster is an independent branch. `raster_run.py` creates/reads project-level `raster_config.yaml`; it does not read the main `config.yaml` or run rate/PPTX/time-cluster modules.
+- Raster NeuroExplorer export reads `NexVar.Timestamps()` for literal `include: yes` units, aligns schedule events at `t=0`, and writes deterministic long CSV inputs before plotting.
+- Raster output includes per-unit figures and one project combined figure. Combined rows use one shared relative-time x-axis; per-trial stimulus durations all start at `t=0` and may end at different times.
 
 ## NeuroExplorer / Origin Policy
 

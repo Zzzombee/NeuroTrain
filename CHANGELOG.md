@@ -4,6 +4,9 @@
 
 ### Added
 
+- Project-level combined raw-spike raster with shared relative-time axis, stable unit ordering, and per-row stimulus durations aligned at `t=0`.
+- Low-agent `raster_run.py` entry point for independent config initialization, NeuroExplorer timestamp export, QC tables, individual figures, and combined output.
+- `combined_row_map.csv` and NeuroExplorer raster export manifest for row- and source-level traceability.
 - Optional OriginPro OPJU archive output in the stable `export_figures` stage when `origin.save_opju: true`.
 - OPJU config template fields for single-project archive output, imported data workbook selection, and graph page selection.
 
