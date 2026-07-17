@@ -13,12 +13,15 @@ Stable project folders:
 01_sorting_info/                    unit_quality_table.xlsx
 02_stim_events/                     stim_schedule_master.xlsx and optional exported event helpers
 03_nex_exports/fullrate/            NeuroExplorer full-session RateHist CSV
-03_nex_exports/aligned_rate/        aligned-rate CSV and PreLightPost summaries
+03_nex_exports/aligned_rate/        original aligned-rate CSV and PreLightPost summaries
+03_nex_exports/time_cluster_aligned_rate/ dedicated boundary-aligned permutation inputs
 05_exported_figures/                Python/matplotlib QC figures
 06_pptx/                            PPTX summaries
 07_statistics/                      review-ready statistics tables
 99_logs/                            processing and error logs
 ```
+
+Each analysis branch writes `unit_cohort.csv` and `unit_cohort_metadata.json` in its output directory. These files record every discovered Unit, the strict `include: yes` decision, exclusion reasons/status counts, and the effective duplicate policy. Fullrate and aligned-rate intermediate CSVs retain all Units.
 
 Paused/experimental:
 

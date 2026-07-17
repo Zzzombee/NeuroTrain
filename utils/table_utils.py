@@ -53,7 +53,11 @@ def normalize_include_column(df: pd.DataFrame) -> pd.DataFrame:
     result = df.copy()
     if "file_id" in result.columns:
         result["file_id"] = result["file_id"].map(_normalize_file_id_cell)
-    result["include_bool"] = result["include"].map(parse_bool)
+    # Downstream Unit eligibility is intentionally stricter than general boolean
+    # parsing: only the literal reviewed value "yes" is eligible.
+    result["include_bool"] = result["include"].map(
+        lambda value: False if pd.isna(value) else str(value).strip().lower() == "yes"
+    )
     for column in ["file_id", "channel", "original_name", "exclusion_reason", "representative_unit", "duplicate_of", "note"]:
         if column not in result.columns:
             result[column] = ""

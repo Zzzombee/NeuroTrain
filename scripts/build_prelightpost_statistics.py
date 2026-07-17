@@ -15,7 +15,8 @@ from utils.aligned_utils import compute_pre_light_post_windows
 from utils.file_id_utils import canonicalize_file_id
 from utils.logging_utils import PipelineLogger
 from utils.path_utils import load_yaml, resolve_path, resolve_project_paths
-from utils.table_utils import normalize_include_column, normalize_stim_schedule, parse_bool, read_table, write_table
+from utils.table_utils import normalize_stim_schedule, parse_bool, read_table, write_table
+from utils.unit_selection import load_unit_quality_table, select_unit_cohort, write_cohort_metadata
 
 
 SUMMARY_RE = re.compile(r"^(?P<file_id>.+)_PreLightPostSummary(?:_no_light_skipped)?\.csv$", re.IGNORECASE)
@@ -194,10 +195,11 @@ def _read_optional_stim(config: dict, paths: dict, logger: PipelineLogger) -> pd
 
 def _read_optional_unit_table(config: dict, paths: dict, logger: PipelineLogger) -> pd.DataFrame:
     path = paths["unit_quality_path"]
-    if not path.exists():
-        return _empty_frame(["file_id", "unit_id", *UNIT_METADATA_COLUMNS, "include_bool"])
     try:
-        df = normalize_include_column(read_table(path))
+        df = load_unit_quality_table(config)
+        df["include_bool"] = df["include"].map(
+            lambda value: str(value).strip().lower() == "yes" if not pd.isna(value) else False
+        )
         if "pl2_file" not in df.columns:
             df["pl2_file"] = ""
         df["file_id"] = [canonicalize_file_id(str(row.file_id), row.pl2_file, config) for row in df.itertuples(index=False)]
@@ -211,8 +213,8 @@ def _read_optional_unit_table(config: dict, paths: dict, logger: PipelineLogger)
                 df[column] = ""
         return df[keep_cols].drop_duplicates(subset=["file_id", "unit_id"], keep="last")
     except Exception as exc:
-        logger.log("prelightpost_stats", "*", str(path), "", "warning", "unit_quality_table read failed; continuing without unit metadata.", exc)
-        return _empty_frame(["file_id", "unit_id", *UNIT_METADATA_COLUMNS, "include_bool"])
+        logger.log("prelightpost_stats", "*", str(path), "", "failed", "unit_quality_table is required and could not be validated.", exc)
+        raise
 
 
 def _read_summary_file(path: Path, file_id: str, logger: PipelineLogger) -> pd.DataFrame:
@@ -365,10 +367,21 @@ def _apply_unit_filters(wide_df: pd.DataFrame, unit_df: pd.DataFrame, config: di
         return wide_df, _empty_frame(WIDE_COLUMNS)
     result = wide_df.merge(unit_df, on=["file_id", "unit_id"], how="left")
     excluded_frames: list[pd.DataFrame] = []
-    include_only = bool(cfg.get("include_only_unit_quality_include_yes", True))
+    if not bool(cfg.get("include_only_unit_quality_include_yes", True)):
+        raise ValueError(
+            "statistics.prelightpost.include_only_unit_quality_include_yes cannot be false; "
+            "unit_quality_table is the mandatory Unit cohort source."
+        )
+    include_only = True
     if include_only:
         missing_unit = result["include_bool"].isna()
-        include_mask = result["include_bool"].map(lambda value: True if pd.isna(value) else bool(value))
+        if missing_unit.any():
+            missing = result.loc[missing_unit, ["file_id", "unit_id"]].drop_duplicates().to_dict("records")
+            raise ValueError(
+                f"prelightpost_stats: unit_quality_table does not match summary Unit(s): {missing}. "
+                "Run build_unit_table, review include values, and rerun."
+            )
+        include_mask = result["include_bool"].map(bool)
         excluded = result[~include_mask]
         if not excluded.empty:
             excluded = excluded.copy()
@@ -387,7 +400,7 @@ def _apply_unit_filters(wide_df: pd.DataFrame, unit_df: pd.DataFrame, config: di
                     "message": "Unit excluded by unit_quality_table include=no.",
                 }
             )
-        result = result[include_mask | missing_unit].copy()
+        result = result[include_mask].copy()
     duplicate_policy = str(cfg.get("duplicate_policy", "keep_all")).strip().lower()
     if duplicate_policy in {"keep_representative_only", "exclude_duplicates"}:
         duplicate_of = result.get("duplicate_of", pd.Series("", index=result.index)).fillna("").astype(str).str.strip()
@@ -761,6 +774,17 @@ def build_prelightpost_statistics(config: dict, logger: PipelineLogger) -> Path:
         loaded_frames.append(_read_summary_file(path, file_id, logger))
     summary_df = pd.concat(loaded_frames, ignore_index=True) if loaded_frames else _empty_frame([*CORE_SUMMARY_COLUMNS, "source_summary_file"])
     summary_df = _filter_rows_by_aggregation(summary_df, config)
+    cohort = None
+    if not summary_df.empty:
+        cohort = select_unit_cohort(
+            config,
+            summary_df[["file_id", "unit_id"]],
+            module="prelightpost_stats",
+            logger=logger,
+            duplicate_policy=cfg.get("duplicate_policy", "keep_all"),
+        )
+        if not config.get("run", {}).get("dry_run", False):
+            write_cohort_metadata(cohort, output_dir)
     normal_file_ids = set(summary_df["file_id"].astype(str).tolist()) if not summary_df.empty else set()
     skipped_rows = _build_skipped_records(config=config, stim_df=stim_df, normal_file_ids=normal_file_ids, skipped_files=skipped_files)
     if cfg.get("fail_on_missing_light_summary", False):

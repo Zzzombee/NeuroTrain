@@ -9,7 +9,8 @@ from scripts.origin_native.labtalk_templates import safe_origin_name
 from utils.aligned_utils import aligned_window_tag
 from utils.logging_utils import PipelineLogger
 from utils.path_utils import resolve_project_paths
-from utils.table_utils import normalize_include_column, normalize_stim_schedule, read_table, write_table
+from utils.table_utils import normalize_stim_schedule, read_table, write_table
+from utils.unit_selection import select_quality_table_cohort, write_cohort_metadata
 
 
 MANIFEST_COLUMNS = [
@@ -131,9 +132,6 @@ def _graph_pages(native_cfg: dict) -> dict:
 
 def _included_units(unit_df: pd.DataFrame, file_id: str) -> Iterable[str]:
     sub_df = unit_df[unit_df["file_id"].astype(str) == str(file_id)].copy()
-    sub_df = sub_df[sub_df["include_bool"]]
-    if "duplicate_of" in sub_df.columns:
-        sub_df = sub_df[sub_df["duplicate_of"].fillna("").astype(str).str.strip() == ""]
     for unit_id in sub_df["unit_id"].astype(str).tolist():
         yield unit_id
 
@@ -195,7 +193,14 @@ def build_origin_manifest(config: dict, logger: PipelineLogger) -> pd.DataFrame:
     )
 
     stim_df = normalize_stim_schedule(read_table(paths["stim_schedule_path"]), file_id_column=config["project"]["file_id_column"])
-    unit_df = normalize_include_column(read_table(paths["unit_quality_path"]))
+    unit_df, cohort = select_quality_table_cohort(
+        config,
+        module="origin_native_plot",
+        logger=logger,
+        duplicate_policy=config.get("unit_selection", {}).get("duplicate_policy", "keep_all"),
+    )
+    if not config.get("run", {}).get("dry_run", False):
+        write_cohort_metadata(cohort, paths["origin_native_manifest_path"].parent)
     manifest_rows: list[dict] = []
 
     for file_id, stim_sub in stim_df.groupby(config["project"]["file_id_column"], sort=False):

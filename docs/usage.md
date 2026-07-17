@@ -100,12 +100,16 @@ Or module-by-module:
 ```powershell
 python run_pipeline.py --config config.yaml --module neuroexplorer_export
 python run_pipeline.py --config config.yaml --module aligned_rate
+python run_pipeline.py --config config.yaml --module time_cluster_aligned_rate
+python run_pipeline.py --config config.yaml --module time_cluster_permutation
 python run_pipeline.py --config config.yaml --module prelightpost_stats
 python run_pipeline.py --config config.yaml --module export_figures
 python run_pipeline.py --config config.yaml --module origin_create_templates
 python run_pipeline.py --config config.yaml --module origin_native_plot
 python run_pipeline.py --config config.yaml --module build_pptx
 ```
+
+Every downstream analysis command requires the project `unit_quality_table`. Only literal `include: yes` is eligible. Missing tables, unmatched data Units, and an empty included cohort fail with an actionable message. Run `build_unit_table`, review the table, and rerun. The full auto pipeline may create or incrementally update the table; standalone analysis commands never silently repair or broaden the cohort.
 
 ## Output checks
 
@@ -116,6 +120,9 @@ Check these files:
 - `03_nex_exports/fullrate/{file_id}_FullRate_bin1s.csv`
 - `03_nex_exports/aligned_rate/{file_id}_LightAlignedRate_pre60_post85_bin1s.csv`
 - `03_nex_exports/aligned_rate/{file_id}_PreLightPostSummary.csv`
+- `03_nex_exports/time_cluster_aligned_rate/{file_id}_TimeClusterAlignedRate_*.csv` (opt-in)
+- `03_nex_exports/aligned_rate/unit_cohort.csv` and `unit_cohort_metadata.json`
+- `03_nex_exports/time_cluster_aligned_rate/unit_cohort.csv` and `unit_cohort_metadata.json`
 - `07_statistics/all_units_pre_light_post_wide.csv`
 - `07_statistics/all_units_pre_light_post_wide_qc.csv`
 - `07_statistics/all_units_pre_light_post_qc_excluded.csv`
@@ -146,6 +153,54 @@ The module reads existing aligned-rate summary CSVs and writes:
 QC keeps rows where `max(pre_hz, light_hz, post_hz) >= 0.5 Hz` and `total_expected_spikes >= 10`. Expected spike counts are computed from each window's firing rate times its window duration, falling back to `duration_s` if window bounds are missing. No-light files are excluded from `wide_qc` and recorded in excluded/skipped outputs. `summary_by_file` and `summary_by_condition` CSVs and Excel sheets are not produced.
 
 `prelightpost_stats` reads the same `aligned_rate.pre_window_s/light_window_s/post_window_s` config to fill or validate window metadata, but it does not recompute firing-rate values. It aggregates the existing `PreLightPostSummary.csv` values. If you change the windows, rerun `aligned_rate` first.
+
+## Independent aligned-rate branches
+
+The ordinary figure/PPTX/PreLightPost branch preserves the original aligned
+coordinate: it subtracts `light_on_s` from each fullrate bin center, so 0 s may
+be a bin center. Run it directly from a terminal with:
+
+```powershell
+python build_aligned_rate_from_fullrate.py --config config.yaml
+```
+
+Time-cluster permutation does not read that output. It requires dedicated bins
+whose 0 s is a boundary and whose centers are `(k+0.5)Δ`. Run the complete
+independent branch with:
+
+```powershell
+python build_time_cluster_aligned_rate.py --config config.yaml
+python time_cluster_permutation.py --config config.yaml
+```
+
+Configure `time_cluster_aligned_rate.output_dir` and
+`time_cluster_permutation.input_dir` as
+`03_nex_exports/time_cluster_aligned_rate`, with input pattern
+`*_TimeClusterAlignedRate_*.csv`. Both branches read existing fullrate CSVs;
+neither rereads PL2 or modifies the source CSV. Existing projects must rebuild
+the dedicated outputs before rerunning permutation. Old normal
+`LightAlignedRate` files are not compatible time-cluster inputs.
+
+Both aligned builders retain every discovered Unit in their intermediate CSVs. The ordinary Summary/statistics/plot/PPTX entry points and the time-cluster permutation entry point apply the shared quality-table cohort. Each branch writes `unit_cohort.csv` plus `unit_cohort_metadata.json`, including discovered/included/excluded counts, exclusion reasons, include-status counts, and the effective duplicate policy.
+
+Set `time_cluster_aligned_rate.source_bin_width_s` to select a dedicated
+fullrate export independently of the normal branch. For example, a normal
+10-second branch can coexist with `source_bin_width_s: 1.0` and target
+`bin_width_s: 30`. The builder reads `*_FullRate_bin1.0s.csv` and performs
+strict exact aggregation; this source remains a binned RateHist export rather
+than raw spike timestamps. A null source width inherits
+`neuroexplorer.fullrate.bin_width_s` for compatibility.
+
+`time_cluster_aligned_rate.incomplete_target_bin_policy` defaults to `error`.
+Use `nan` only when unequal recording lengths should remain as explicit missing
+target bins: the builder writes the true interval, missing firing rate, actual
+source-bin count, coverage duration, and incomplete method. It never computes
+a target firing rate from partial coverage.
+
+Dedicated windows are half-open. With `Δ=10 s`, baseline `[-120,0)` selects
+`-115..-5`, while test `[0,300)` selects `5..295`. The time-cluster heatmap
+uses true center ± `Δ/2` cell edges and no colored baseline/test overlays, so
+finite cell colors represent only `delta_rate_hz`.
 
 ## OriginPro plotting paths
 

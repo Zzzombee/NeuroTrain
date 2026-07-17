@@ -6,7 +6,8 @@ from pathlib import Path
 from scripts.adapters.neuroexplorer_adapter import NeedsManualActionError, NeuroExplorerAdapter
 from utils.logging_utils import PipelineLogger
 from utils.path_utils import load_yaml, resolve_project_paths
-from utils.table_utils import normalize_include_column, normalize_stim_schedule, read_table
+from utils.table_utils import normalize_stim_schedule, read_table
+from utils.unit_selection import select_quality_table_cohort, write_cohort_metadata
 
 
 def _expected_export_path(config: dict, paths: dict, file_id: str, kind: str) -> Path:
@@ -54,7 +55,8 @@ def _manual_fallback_for_file(
     pl2_path: Path,
     light_on_times: list[float],
     light_off_times: list[float],
-    unit_names: list[str],
+    psth_unit_names: list[str],
+    fullrate_unit_names: list[str],
     psth_output: Path,
     fullrate_output: Path,
 ) -> None:
@@ -72,14 +74,14 @@ def _manual_fallback_for_file(
             adapter.config["neuroexplorer"]["psth"]["bin_width_s"],
             adapter.config["neuroexplorer"]["psth"]["histogram_unit"],
         )
-        manual_backend.export_psth(file_id, unit_names, psth_output)
+        manual_backend.export_psth(file_id, psth_unit_names, psth_output)
     if adapter.config["neuroexplorer"]["fullrate"].get("enabled", False):
         manual_backend.configure_fullrate_template(
             _fullrate_template_name(adapter.config),
             adapter.config["neuroexplorer"]["fullrate"]["bin_width_s"],
             adapter.config["neuroexplorer"]["fullrate"]["histogram_unit"],
         )
-        manual_backend.export_fullrate(file_id, unit_names, fullrate_output)
+        manual_backend.export_fullrate(file_id, fullrate_unit_names, fullrate_output)
 
 
 def _run_fullrate_only_export(adapter: NeuroExplorerAdapter, config: dict, file_id: str, unit_names: list[str], fullrate_output: Path) -> None:
@@ -99,7 +101,8 @@ def _run_psth_export(
     file_id: str,
     light_on_times: list[float],
     light_off_times: list[float],
-    unit_names: list[str],
+    psth_unit_names: list[str],
+    fullrate_unit_names: list[str],
     psth_output: Path,
     fullrate_output: Path,
     export_psth: bool,
@@ -118,11 +121,11 @@ def _run_psth_export(
             config["neuroexplorer"]["psth"]["histogram_unit"],
         )
         adapter.run_template(config["neuroexplorer"]["templates"]["psth_template_name"])
-        adapter.export_psth(str(file_id), unit_names, psth_output)
+        adapter.export_psth(str(file_id), psth_unit_names, psth_output)
 
     if export_fullrate:
         try:
-            _run_fullrate_only_export(adapter, config, str(file_id), unit_names, fullrate_output)
+            _run_fullrate_only_export(adapter, config, str(file_id), fullrate_unit_names, fullrate_output)
         except NeedsManualActionError as exc:
             if config["neuroexplorer"]["fullrate"].get("skip_if_template_missing", True):
                 adapter.logger.log(
@@ -141,8 +144,19 @@ def _run_psth_export(
 def export_from_neuroexplorer(config: dict, logger: PipelineLogger) -> None:
     paths = resolve_project_paths(config)
     stim_df = normalize_stim_schedule(read_table(paths["stim_schedule_path"]), file_id_column=config["project"]["file_id_column"])
-    unit_df = normalize_include_column(read_table(paths["unit_quality_path"]))
-    included_df = unit_df[unit_df["include_bool"]].copy()
+    included_df, cohort = select_quality_table_cohort(
+        config,
+        module="export_from_neuroexplorer",
+        logger=logger,
+        duplicate_policy=config.get("unit_selection", {}).get("duplicate_policy", "keep_all"),
+    )
+    unit_df = cohort.quality_table.copy()
+    # Fullrate/PSTH exports are source/intermediate data. Export every discovered
+    # Unit listed in the quality table; downstream analysis entry points apply
+    # the reviewed include cohort without deleting source data.
+    all_units_df = unit_df.copy()
+    if not config.get("run", {}).get("dry_run", False):
+        write_cohort_metadata(cohort, paths["nex_fullrate_dir"])
     adapter = NeuroExplorerAdapter(config=config, logger=logger)
     analysis_mode = _analysis_mode(config)
     if analysis_mode in {"fullrate_aligned", "auto"}:
@@ -177,8 +191,10 @@ def export_from_neuroexplorer(config: dict, logger: PipelineLogger) -> None:
             raise
 
     for file_id, stim_sub_df in stim_df.groupby(config["project"]["file_id_column"], sort=False):
-        file_units = included_df[included_df[config["project"]["file_id_column"]] == file_id]
-        unit_names = _selected_unit_names(file_units)
+        file_units = all_units_df[all_units_df[config["project"]["file_id_column"]] == file_id]
+        included_file_units = included_df[included_df[config["project"]["file_id_column"]] == file_id]
+        fullrate_unit_names = _selected_unit_names(file_units)
+        psth_unit_names = _selected_unit_names(included_file_units)
         file_has_light = any(stim_sub_df["has_light"].astype(str).str.strip().str.lower() == "yes") if "has_light" in stim_sub_df.columns else True
         light_on_times = stim_sub_df["light_on_s"].dropna().astype(float).tolist() if file_has_light else []
         light_off_times = stim_sub_df["light_off_s"].dropna().astype(float).tolist() if file_has_light else []
@@ -205,7 +221,7 @@ def export_from_neuroexplorer(config: dict, logger: PipelineLogger) -> None:
         try:
             adapter.open_file(pl2_path)
             if analysis_mode in {"fullrate_aligned", "auto"}:
-                _run_fullrate_only_export(adapter, config, str(file_id), unit_names, fullrate_output)
+                _run_fullrate_only_export(adapter, config, str(file_id), fullrate_unit_names, fullrate_output)
             else:
                 _run_psth_export(
                     adapter,
@@ -213,7 +229,8 @@ def export_from_neuroexplorer(config: dict, logger: PipelineLogger) -> None:
                     str(file_id),
                     light_on_times,
                     light_off_times,
-                    unit_names,
+                    psth_unit_names,
+                    fullrate_unit_names,
                     psth_output,
                     fullrate_output,
                     export_psth,
@@ -252,7 +269,8 @@ def export_from_neuroexplorer(config: dict, logger: PipelineLogger) -> None:
                         str(file_id),
                         light_on_times,
                         light_off_times,
-                        unit_names,
+                        psth_unit_names,
+                        fullrate_unit_names,
                         psth_output,
                         fullrate_output,
                         export_psth,
@@ -294,7 +312,8 @@ def export_from_neuroexplorer(config: dict, logger: PipelineLogger) -> None:
                 pl2_path,
                 light_on_times,
                 light_off_times,
-                unit_names,
+                psth_unit_names,
+                fullrate_unit_names,
                 psth_output,
                 fullrate_output,
             )

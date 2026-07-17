@@ -7,6 +7,7 @@ from typing import Callable
 
 from scripts.build_pptx import build_pptx
 from scripts.build_aligned_rate_from_fullrate import build_aligned_rate_from_fullrate
+from scripts.build_time_cluster_aligned_rate import build_time_cluster_aligned_rate
 from scripts.init_project import initialize_project
 from scripts.build_prelightpost_statistics import build_prelightpost_statistics
 from scripts.build_stim_schedule_from_filenames import build_stim_schedule_from_filenames
@@ -30,6 +31,7 @@ MODULE_RUNNERS: dict[str, Callable] = {
     "build_unit_table": build_unit_quality_table,
     "neuroexplorer_export": export_from_neuroexplorer,
     "aligned_rate": build_aligned_rate_from_fullrate,
+    "time_cluster_aligned_rate": build_time_cluster_aligned_rate,
     "time_cluster_permutation": run_time_cluster_permutation,
     "prelightpost_stats": build_prelightpost_statistics,
     "export_figures": plot_in_origin,
@@ -51,6 +53,7 @@ def _clean_outputs_if_requested(config: dict, paths: dict, logger: PipelineLogge
         return
     targets = [
         paths["nex_aligned_rate_dir"],
+        paths["time_cluster_aligned_rate_dir"],
         paths["figure_aligned_dir"],
         paths["figure_summary_dir"],
         paths["pptx_dir"],
@@ -204,6 +207,7 @@ def main() -> int:
                 "prepare_events",
                 "neuroexplorer_export",
                 "aligned_rate",
+                "time_cluster_aligned_rate",
                 "time_cluster_permutation",
                 "prelightpost_stats",
                 "export_figures",

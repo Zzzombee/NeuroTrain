@@ -9,6 +9,7 @@ from utils.aligned_utils import aligned_window_tag, compute_aligned_window, comp
 from utils.logging_utils import PipelineLogger
 from utils.path_utils import load_yaml, resolve_project_paths
 from utils.table_utils import normalize_stim_schedule, read_table, write_table
+from utils.unit_selection import filter_to_included_units, select_unit_cohort, write_cohort_metadata
 
 
 def _aligned_cfg(config: dict) -> dict:
@@ -215,7 +216,36 @@ def build_aligned_rate_from_fullrate(config: dict, logger: PipelineLogger) -> No
         return
 
     bin_width_s = float(aligned_cfg["bin_width_s"])
+    fullrate_cache: dict[str, pd.DataFrame] = {}
+    discovered_frames: list[pd.DataFrame] = []
+    for file_id in stim_df[config["project"]["file_id_column"]].astype(str).drop_duplicates():
+        fullrate_csv = paths["nex_fullrate_dir"] / config["neuroexplorer"]["export"]["expected_fullrate_pattern"].format(
+            file_id=file_id,
+            bin_width_s=config["neuroexplorer"]["fullrate"]["bin_width_s"],
+        )
+        if not fullrate_csv.exists():
+            continue
+        frame = read_table(fullrate_csv)
+        if "unit_id" not in frame.columns:
+            raise ValueError(f"Fullrate CSV is missing unit_id: {fullrate_csv}")
+        frame = frame.copy()
+        frame["file_id"] = str(file_id)
+        fullrate_cache[str(file_id)] = frame
+        discovered_frames.append(frame[["file_id", "unit_id"]])
+    cohort = None
+    if discovered_frames:
+        cohort = select_unit_cohort(
+            config,
+            pd.concat(discovered_frames, ignore_index=True),
+            module="build_aligned_rate_from_fullrate",
+            logger=logger,
+            duplicate_policy=config.get("unit_selection", {}).get("duplicate_policy", "keep_all"),
+        )
+        if not config["run"]["dry_run"]:
+            write_cohort_metadata(cohort, paths["nex_aligned_rate_dir"])
+
     for file_id, stim_sub in stim_df.groupby(config["project"]["file_id_column"], sort=False):
+        file_id = str(file_id)
         has_light_values = stim_sub["has_light"].astype(str).str.strip().str.lower().tolist() if "has_light" in stim_sub.columns else ["yes"]
         has_light = any(value == "yes" for value in has_light_values)
         fullrate_csv = paths["nex_fullrate_dir"] / config["neuroexplorer"]["export"]["expected_fullrate_pattern"].format(
@@ -256,7 +286,10 @@ def build_aligned_rate_from_fullrate(config: dict, logger: PipelineLogger) -> No
                 "No light event; aligned rate skipped.",
             )
             continue
-        fullrate_df = read_table(fullrate_csv)
+        fullrate_df = fullrate_cache.get(file_id)
+        if fullrate_df is None:
+            fullrate_df = read_table(fullrate_csv)
+            fullrate_df["file_id"] = file_id
         trial_windows = []
         for stim_row in stim_sub.itertuples(index=False):
             trial_window = compute_aligned_window(
@@ -300,14 +333,20 @@ def build_aligned_rate_from_fullrate(config: dict, logger: PipelineLogger) -> No
             continue
         if not config["run"]["dry_run"]:
             write_table(aligned_df, aligned_path)
-            write_table(summary_df, summary_path)
+            selected_summary = filter_to_included_units(summary_df, cohort) if cohort is not None else summary_df
+            write_table(selected_summary, summary_path)
         logger.log(
             "build_aligned_rate_from_fullrate",
             str(file_id),
             str(fullrate_csv),
             str(aligned_path),
             "success",
-            f"Built aligned-rate and pre/light/post summary outputs. window_mode={aligned_cfg.get('window_mode', 'configured_windows')}; tag={aligned_window_tag(aligned_cfg)}; n_rows={len(aligned_df)}",
+            (
+                "Built complete aligned-rate intermediate and cohort-filtered pre/light/post summary. "
+                f"window_mode={aligned_cfg.get('window_mode', 'configured_windows')}; tag={aligned_window_tag(aligned_cfg)}; "
+                f"n_aligned_rows_all_units={len(aligned_df)}; n_summary_rows_included_units="
+                f"{len(filter_to_included_units(summary_df, cohort)) if cohort is not None else len(summary_df)}"
+            ),
         )
 
 

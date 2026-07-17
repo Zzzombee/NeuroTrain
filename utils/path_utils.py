@@ -40,10 +40,15 @@ def resolve_project_paths(config: dict) -> dict:
     unit_table_cfg = config.get("unit_table", {})
     stim_cfg = config.get("stim_schedule", {})
     statistics_cfg = config.get("statistics", {})
+    time_cluster_aligned_cfg = config.get("time_cluster_aligned_rate", {})
     nex_psth_dir = resolve_path(root_dir, export_cfg.get("output_psth_dir", "03_nex_exports/psth"))
     nex_fullrate_dir = resolve_path(root_dir, export_cfg.get("output_fullrate_dir", "03_nex_exports/fullrate"))
     nex_raster_dir = resolve_path(root_dir, export_cfg.get("output_raster_dir", "03_nex_exports/raster"))
     nex_aligned_rate_dir = resolve_path(root_dir, export_cfg.get("output_aligned_rate_dir", "03_nex_exports/aligned_rate"))
+    time_cluster_aligned_rate_dir = resolve_path(
+        root_dir,
+        time_cluster_aligned_cfg.get("output_dir", "03_nex_exports/time_cluster_aligned_rate"),
+    )
     pptx_output_path = resolve_path(root_dir, config["pptx"]["output_file"])
     unit_quality_path = resolve_path(root_dir, unit_table_cfg.get("output_path", config["input"]["unit_quality_table"]))
     logs_dir = ensure_dir(root_dir / "99_logs")
@@ -57,6 +62,7 @@ def resolve_project_paths(config: dict) -> dict:
         "nex_fullrate_dir": ensure_dir(nex_fullrate_dir),
         "nex_raster_dir": ensure_dir(nex_raster_dir),
         "nex_aligned_rate_dir": ensure_dir(nex_aligned_rate_dir),
+        "time_cluster_aligned_rate_dir": ensure_dir(time_cluster_aligned_rate_dir),
         "origin_template_psth": resolve_path(root_dir, origin_cfg.get("template_psth", "04_origin_projects/templates/PSTH_template.otpu")),
         "origin_template_fullrate": resolve_path(root_dir, origin_cfg.get("template_fullrate", "04_origin_projects/templates/FullRate_template.otpu")),
         "origin_output_dir": ensure_dir(resolve_path(root_dir, origin_cfg.get("opju_output_dir", "04_origin_projects/opju_outputs"))),

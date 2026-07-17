@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import math
 from pathlib import Path
 
 from utils.aligned_utils import compute_aligned_window, compute_pre_light_post_windows
@@ -125,6 +126,7 @@ def validate_project(config: dict, logger: PipelineLogger) -> None:
         "nex_fullrate_dir",
         "nex_raster_dir",
         "nex_aligned_rate_dir",
+        "time_cluster_aligned_rate_dir",
         "origin_output_dir",
         "figure_psth_dir",
         "figure_fullrate_dir",
@@ -207,10 +209,33 @@ def validate_project(config: dict, logger: PipelineLogger) -> None:
         raise ValueError("Unsupported aligned_rate.multi_trial_aggregation")
     if aligned_cfg.get("variable_duration_policy", "keep_trials") not in {"keep_trials", "align_by_light_on_and_pad", "error"}:
         raise ValueError("Unsupported aligned_rate.variable_duration_policy")
-    if aligned_cfg["off_boundary_policy"] not in {"nearest", "interpolate", "error"}:
-        raise ValueError("Unsupported aligned_rate.off_boundary_policy")
     if float(aligned_cfg["bin_width_s"]) <= 0:
         raise ValueError("aligned_rate.bin_width_s must be > 0.")
+    time_cluster_aligned_cfg = config.get("time_cluster_aligned_rate", {})
+    if time_cluster_aligned_cfg.get("enabled", True):
+        source_bin_width = time_cluster_aligned_cfg.get("source_bin_width_s")
+        if source_bin_width is None:
+            source_bin_width = config["neuroexplorer"]["fullrate"]["bin_width_s"]
+        if float(source_bin_width) <= 0:
+            raise ValueError("time_cluster_aligned_rate.source_bin_width_s must be null or > 0.")
+        time_cluster_bin_width = time_cluster_aligned_cfg.get("bin_width_s")
+        if time_cluster_bin_width is None:
+            time_cluster_bin_width = source_bin_width
+        if float(time_cluster_bin_width) <= 0:
+            raise ValueError("time_cluster_aligned_rate.bin_width_s must be null or > 0.")
+        width_ratio = float(time_cluster_bin_width) / float(source_bin_width)
+        if round(width_ratio) < 1 or not math.isclose(width_ratio, round(width_ratio), rel_tol=1.0e-6, abs_tol=1.0e-6):
+            raise ValueError(
+                "time_cluster_aligned_rate.bin_width_s must be an integer multiple of source_bin_width_s."
+            )
+        if time_cluster_aligned_cfg.get("incomplete_target_bin_policy", "error") not in {"error", "nan"}:
+            raise ValueError("time_cluster_aligned_rate.incomplete_target_bin_policy must be error or nan.")
+        if time_cluster_aligned_cfg.get("off_boundary_policy", "nearest") not in {"nearest", "interpolate", "error"}:
+            raise ValueError("Unsupported time_cluster_aligned_rate.off_boundary_policy")
+        window = time_cluster_aligned_cfg.get("window_s")
+        if window is not None:
+            if not isinstance(window, list) or len(window) != 2 or float(window[0]) >= float(window[1]):
+                raise ValueError("time_cluster_aligned_rate.window_s must be [start_s, end_s] with start < end.")
     if not config["neuroexplorer"]["fullrate"].get("template_name"):
         raise ValueError("neuroexplorer.fullrate.template_name is required for fullrate_aligned mode.")
     if aligned_cfg.get("window_mode", "configured_windows") not in {"configured_windows", "fixed", "light_duration_plus_margin"}:
