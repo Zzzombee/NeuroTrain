@@ -63,6 +63,7 @@ class PreLightPostStatisticsTests(unittest.TestCase):
                 "activity_filter": {
                     "enabled": True,
                     "min_max_window_hz": 0.5,
+                    "min_pre_or_post_hz": 0.5,
                     "min_total_expected_spikes": 10,
                     "clean_table_suffix": "_qc",
                 },
@@ -131,7 +132,7 @@ class PreLightPostStatisticsTests(unittest.TestCase):
             paths["unit_quality_path"],
         )
         rows = [
-            self._summary_row("01", "unit01", 0.2, 0.6, 0.1, 15),
+            self._summary_row("01", "unit01", 0.6, 0.6, 0.1, 15),
             self._summary_row("02", "unit01", 0.1, 0.4, 0.2, 15),
             self._summary_row("03", "unit01", 0.1, 0.5, 0.0, 10),
             self._summary_row("04", "unit01", 0.1, 0.5, 0.4, 10),
@@ -157,17 +158,15 @@ class PreLightPostStatisticsTests(unittest.TestCase):
             excluded = read_table(stats_dir / "all_units_pre_light_post_qc_excluded.csv")
 
             self.assertEqual(len(wide), 5)
-            self.assertEqual({_fid(value) for value in wide_qc["file_id"]}, {"01", "04"})
+            self.assertEqual({_fid(value) for value in wide_qc["file_id"]}, {"01"})
             pass_row = wide_qc[wide_qc["file_id"].map(_fid).eq("01")].iloc[0]
             self.assertEqual(float(pass_row["max_window_hz"]), 0.6)
-            self.assertEqual(float(pass_row["total_expected_spikes"]), 13.5)
-            boundary_row = wide_qc[wide_qc["file_id"].map(_fid).eq("04")].iloc[0]
-            self.assertEqual(float(boundary_row["max_window_hz"]), 0.5)
-            self.assertEqual(float(boundary_row["total_expected_spikes"]), 10.0)
+            self.assertEqual(float(pass_row["total_expected_spikes"]), 19.5)
 
             reasons_by_file = {_fid(row.file_id): row.activity_filter_reason for row in excluded.itertuples(index=False) if pd.notna(row.file_id)}
-            self.assertEqual(reasons_by_file["02"], "low_max_window_hz")
-            self.assertEqual(reasons_by_file["03"], "low_total_expected_spikes")
+            self.assertEqual(reasons_by_file["02"], "low_max_window_hz;low_pre_and_post_hz")
+            self.assertEqual(reasons_by_file["03"], "low_pre_and_post_hz;low_total_expected_spikes")
+            self.assertEqual(reasons_by_file["04"], "low_pre_and_post_hz")
             self.assertEqual(reasons_by_file["05"], "no_light_control")
             self.assertEqual(reasons_by_file["06"], "missing_required_values")
             self.assertEqual(reasons_by_file["07"], "excluded_by_unit_quality_table")

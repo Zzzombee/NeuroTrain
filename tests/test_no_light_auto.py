@@ -130,6 +130,32 @@ class NoLightAutoTests(unittest.TestCase):
         self.assertEqual(canonicalize_file_id("test01", "sorted_01_nolight_1.pl2", config), "01")
         self.assertEqual(canonicalize_file_id("sorted_01_nolight_1", None, config), "01")
 
+    def test_read_excel_preserves_leading_zero_file_id(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "identifiers.xlsx"
+            pd.DataFrame(
+                {
+                    "file_id": ["042702"],
+                    "file_index": ["007"],
+                    "value": [1],
+                }
+            ).to_excel(path, index=False)
+
+            result = read_table(path)
+
+            self.assertEqual(result.loc[0, "file_id"], "042702")
+            self.assertEqual(result.loc[0, "file_index"], "007")
+
+    def test_read_csv_preserves_leading_zero_file_id(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "identifiers.csv"
+            path.write_text("file_id,file_index,value\n042702,007,1\n", encoding="utf-8")
+
+            result = read_table(path)
+
+            self.assertEqual(result.loc[0, "file_id"], "042702")
+            self.assertEqual(result.loc[0, "file_index"], "007")
+
     def test_build_stim_schedule_parses_no_light(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_root = Path(tmpdir)

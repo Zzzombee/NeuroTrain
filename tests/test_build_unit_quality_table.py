@@ -24,6 +24,17 @@ class FakeAdapter:
     UNIT_MAP = {
         "02_sorted.pl2": ["SPK_SPKC01a", "SPK_SPKC02a", "SPK_SPKC10b"],
         "07_sorted.pl2": ["SPK_SPKC04a", "SPK_SPKC05a", "Noise", "Unsorted"],
+        "sorted_071007_120light25_3,9,12,15.pl2": [
+            "SPK_SPKC02a",
+            "SPK_SPKC03a",
+            "SPK_SPKC04a",
+            "SPK_SPKC06a",
+            "SPK_SPKC07a",
+            "SPK_SPKC09a",
+            "SPK_SPKC12a",
+            "SPK_SPKC15a",
+            "SPK_SPKC15b",
+        ],
     }
 
     def __init__(self, config, logger):
@@ -136,6 +147,42 @@ class BuildUnitQualityTableTests(unittest.TestCase):
             self.assertEqual(new_row["include"], "yes")
             stale_row = df[(df["file_id"] == "test02") & (df["original_name"] == "SPK_SPKC99a")].iloc[0]
             self.assertEqual(str(stale_row["detected_in_latest_scan"]), "no")
+
+    def test_filename_channels_control_include_for_all_units_on_channel(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_root = Path(tmpdir)
+            for relative_dir in ["00_raw_pl2", "01_sorting_info", "02_stim_events", "99_logs"]:
+                (tmp_root / relative_dir).mkdir(parents=True, exist_ok=True)
+            pl2_name = "sorted_071007_120light25_3,9,12,15.pl2"
+            (tmp_root / "00_raw_pl2" / pl2_name).write_text("", encoding="utf-8")
+            (tmp_root / "02_stim_events" / "stim_schedule_master.csv").write_text(
+                "file_id,pl2_file,has_light,light_on_s,duration_s,light_off_s,sorted_channels\n"
+                f"071007,{pl2_name},yes,120,25,145,\"3,9,12,15\"\n",
+                encoding="utf-8",
+            )
+            config = sample_config(tmp_root)
+            config["analysis"]["mode"] = "fullrate_aligned"
+            config["unit_table"]["filename_channel_selection"] = {
+                "enabled": True,
+                "override_manual_include": True,
+                "exclusion_reason": "channel_not_in_pl2_filename",
+                "unparseable_channel_reason": "channel_unparseable",
+            }
+            logger = PipelineLogger(resolve_project_paths(config)["logs_dir"])
+
+            with mock.patch("scripts.build_unit_quality_table.NeuroExplorerAdapter", side_effect=lambda config, logger: FakeAdapter(config, logger)):
+                output_path = build_unit_quality_table(config, logger)
+
+            df = read_table(output_path)
+            self.assertEqual(len(df), 9)
+            include_by_name = dict(zip(df["original_name"], df["include"]))
+            self.assertEqual(
+                {name for name, include in include_by_name.items() if include == "yes"},
+                {"SPK_SPKC03a", "SPK_SPKC09a", "SPK_SPKC12a", "SPK_SPKC15a", "SPK_SPKC15b"},
+            )
+            excluded = df[df["include"].eq("no")]
+            self.assertEqual(set(excluded["channel"]), {2, 4, 6, 7})
+            self.assertEqual(set(excluded["exclusion_reason"]), {"channel_not_in_pl2_filename"})
 
     def test_fullrate_aligned_missing_unit_table_triggers_auto_build(self):
         with tempfile.TemporaryDirectory() as tmpdir:
