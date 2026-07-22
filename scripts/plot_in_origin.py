@@ -197,6 +197,14 @@ def _load_intervals_for_file(config: dict, paths: dict, file_id: str, stim_sub: 
     return [(float(row.light_on_s), float(row.light_off_s)) for row in stim_sub.itertuples(index=False)]
 
 
+def _unit_key_candidates(file_units: pd.DataFrame) -> set[str]:
+    keys: set[str] = set()
+    for column in ("unit_id", "original_name"):
+        if column in file_units.columns:
+            keys.update(file_units[column].dropna().astype(str))
+    return keys
+
+
 def _expected_export_with_legacy(config: dict, paths: dict, file_id: str, pl2_file: str, kind: str, logger: PipelineLogger) -> Path:
     export_cfg = config.get("neuroexplorer", {}).get("export", {})
     if kind == "fullrate":
@@ -515,7 +523,11 @@ def plot_in_origin(config: dict, logger: PipelineLogger) -> None:
                 else:
                     logger.log("plot_in_origin", str(file_id), str(summary_csv), str(prepost_png), "warning", f"No pre/light/post summary data found for {unit_id}.")
 
-        filtered_all_units = full_df[full_df["unit_id"].astype(str).isin(file_units["unit_id"].astype(str))] if has_fullrate else pd.DataFrame()
+        filtered_all_units = (
+            full_df[full_df["unit_id"].astype(str).isin(_unit_key_candidates(file_units))]
+            if has_fullrate and "unit_id" in full_df.columns
+            else pd.DataFrame()
+        )
         if not filtered_all_units.empty:
             overlay_png = paths["figure_summary_dir"] / f"{file_id}_AllUnits_FullRate.png"
             _matplotlib_overlay_export(

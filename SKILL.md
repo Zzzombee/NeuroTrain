@@ -145,11 +145,12 @@ python run_pipeline.py --config config.yaml --module prelightpost_stats
   - `07_statistics/all_units_pre_light_post_wide_qc.csv`
   - `07_statistics/all_units_pre_light_post_qc_excluded.csv`
   - `07_statistics/skipped_or_missing_prelightpost.csv`
-- QC rule: keep rows where `max(pre_hz, light_hz, post_hz) >= 0.5 Hz` and `total_expected_spikes >= 10`.
+- QC rule: keep rows where `max(pre_hz, light_hz, post_hz) >= 0.5 Hz`, at least one of `pre_hz` or `post_hz` is strictly greater than `0.5 Hz`, and `total_expected_spikes >= 10`.
 - `pre_hz` is an alias of `baseline_hz`; `baseline_hz` remains in output.
 - No-light files do not enter the pre/light/post QC table; they are recorded in `qc_excluded` and/or `skipped_or_missing`.
 - `summary_by_file` and `summary_by_condition` CSV outputs are no longer generated.
 - `unit_quality_table` is the only downstream Unit cohort source. Only literal `include: yes` is eligible; `no`, blank, other values, and missing rows are excluded.
+- Unit discovery retains every matching NeuroExplorer `NeuronNames` variable from the PL2 as a candidate row. When `unit_table.filename_channel_selection.enabled: true`, channels parsed from the PL2 filename control `include`: every suffix Unit on a listed channel (for example, `SPK_SPKC15a` and `SPK_SPKC15b`) is included, while detected Units on unlisted channels remain in the table with `include: no` and an exclusion reason.
 - Missing tables, unmatched analysis Units, or an empty eligible cohort must fail with an actionable message; never silently include all Units.
 - Auto pipeline updates append new Units with default `include: yes` while `preserve_manual_edits: true` preserves manual `no`, duplicate, reason, representative, and note fields.
 - Fullrate and aligned-rate source/intermediate CSVs retain all Units. Apply cohort selection at Summary/statistics/plot/PPTX/permutation entry points.

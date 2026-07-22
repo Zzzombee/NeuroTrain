@@ -14,10 +14,12 @@ def read_table(path: Path) -> pd.DataFrame:
     path = Path(path)
     suffix = path.suffix.lower()
     if suffix == ".csv":
-        df = pd.read_csv(path)
+        df = pd.read_csv(path, dtype={"file_id": str, "file_index": str})
         return _normalize_identifier_columns(df)
     if suffix in {".xlsx", ".xls"}:
-        df = pd.read_excel(path)
+        # Excel readers otherwise infer digit-only identifiers as integers and
+        # silently discard leading zeroes (for example, 042702 -> 42702).
+        df = pd.read_excel(path, dtype={"file_id": str, "file_index": str})
         return _normalize_identifier_columns(df)
     raise ValueError(f"Unsupported table format: {path}")
 

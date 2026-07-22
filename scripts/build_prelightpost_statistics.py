@@ -366,6 +366,24 @@ def _apply_unit_filters(wide_df: pd.DataFrame, unit_df: pd.DataFrame, config: di
     if unit_df.empty:
         return wide_df, _empty_frame(WIDE_COLUMNS)
     result = wide_df.merge(unit_df, on=["file_id", "unit_id"], how="left")
+    if "original_name" in unit_df.columns:
+        alt_index: dict[tuple[str, str], tuple] = {}
+        for row in unit_df.itertuples(index=False):
+            original_name = str(getattr(row, "original_name", "")).strip()
+            file_id = str(getattr(row, "file_id", "")).strip()
+            if original_name and file_id:
+                alt_index[(file_id, original_name)] = row
+        if alt_index:
+            missing_mask = result["include_bool"].isna()
+            for idx in result[missing_mask].index:
+                file_id = str(result.at[idx, "file_id"]).strip()
+                unit_id = str(result.at[idx, "unit_id"]).strip()
+                alt_match = alt_index.get((file_id, unit_id))
+                if alt_match is None:
+                    continue
+                for column in unit_df.columns:
+                    if column in result.columns:
+                        result.at[idx, column] = getattr(alt_match, column)
     excluded_frames: list[pd.DataFrame] = []
     if not bool(cfg.get("include_only_unit_quality_include_yes", True)):
         raise ValueError(
@@ -604,6 +622,7 @@ def _activity_filter_cfg(config: dict) -> dict:
     return {
         "enabled": bool(cfg.get("enabled", True)),
         "min_max_window_hz": float(cfg.get("min_max_window_hz", 0.5)),
+        "min_pre_or_post_hz": float(cfg.get("min_pre_or_post_hz", 0.5)),
         "min_total_expected_spikes": float(cfg.get("min_total_expected_spikes", 10)),
     }
 
@@ -648,6 +667,7 @@ def _append_activity_qc(
 
     filter_cfg = _activity_filter_cfg(config)
     min_max = filter_cfg["min_max_window_hz"]
+    min_pre_or_post = filter_cfg["min_pre_or_post_hz"]
     min_spikes = filter_cfg["min_total_expected_spikes"]
     reasons: list[str] = []
     passes: list[str] = []
@@ -666,6 +686,8 @@ def _append_activity_qc(
         else:
             if float(row["max_window_hz"]) < min_max:
                 row_reasons.append("low_max_window_hz")
+            if float(row["pre_hz"]) <= min_pre_or_post and float(row["post_hz"]) <= min_pre_or_post:
+                row_reasons.append("low_pre_and_post_hz")
             if float(row["total_expected_spikes"]) < min_spikes:
                 row_reasons.append("low_total_expected_spikes")
         passes.append("yes" if not row_reasons else "no")
@@ -848,6 +870,7 @@ def build_prelightpost_statistics(config: dict, logger: PipelineLogger) -> Path:
     message = (
         "Built pre/light/post wide table and QC-filtered wide table. "
         f"QC rule: max(pre_hz, light_hz, post_hz) >= {filter_cfg['min_max_window_hz']:g} Hz "
+        f"and (pre_hz > {filter_cfg['min_pre_or_post_hz']:g} Hz or post_hz > {filter_cfg['min_pre_or_post_hz']:g} Hz) "
         f"and total_expected_spikes >= {filter_cfg['min_total_expected_spikes']:g}."
     )
     logger.log(

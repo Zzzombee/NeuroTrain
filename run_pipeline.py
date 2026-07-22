@@ -9,6 +9,7 @@ from scripts.build_pptx import build_pptx
 from scripts.build_aligned_rate_from_fullrate import build_aligned_rate_from_fullrate
 from scripts.build_time_cluster_aligned_rate import build_time_cluster_aligned_rate
 from scripts.init_project import initialize_project
+from scripts.maintenance import canonicalize_project_tables
 from scripts.build_prelightpost_statistics import build_prelightpost_statistics
 from scripts.build_stim_schedule_from_filenames import build_stim_schedule_from_filenames
 from scripts.build_unit_quality_table import build_unit_quality_table
@@ -202,6 +203,8 @@ def main() -> int:
         else:
             _prepare_stim_schedule_if_needed(config, logger)
             _prepare_unit_table_if_needed(config, logger)
+            if not config["run"].get("dry_run", False):
+                canonicalize_project_tables(config, logger)
             validate_project(config=config, logger=logger)
             module_order = [
                 "prepare_events",

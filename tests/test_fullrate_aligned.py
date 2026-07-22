@@ -465,6 +465,39 @@ class FullrateAlignedTests(unittest.TestCase):
             self.assertEqual(full_band, [(120.0, 135.0), (240.0, 255.0)])
             self.assertEqual(aligned_band, [(0.0, 15.0)])
 
+    def test_plot_in_origin_overlay_matches_original_unit_names(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_root = Path(tmpdir)
+            config, logger = self._init_project(tmp_root)
+            paths = resolve_project_paths(config)
+            write_table(
+                pd.DataFrame(
+                    {
+                        "file_id": ["demo"] * 2,
+                        "unit_id": ["SPK_SPKC04a"] * 2,
+                        "time_bin_start_s": [0.5, 1.5],
+                        "time_bin_end_s": [1.5, 2.5],
+                        "time_bin_center_s": [1, 2],
+                        "firing_rate_hz": [1, 2],
+                        "source_file": ["raw.txt"] * 2,
+                    }
+                ),
+                paths["nex_fullrate_dir"] / "demo_FullRate_bin1s.csv",
+            )
+
+            captured_overlay = []
+
+            def capture_overlay(**kwargs):
+                captured_overlay.append(kwargs["data"].copy())
+
+            with mock.patch("plot_in_origin._matplotlib_export", return_value=None), mock.patch(
+                "plot_in_origin._matplotlib_overlay_export", side_effect=capture_overlay
+            ), mock.patch("plot_in_origin.generate_summary_figures", return_value=None):
+                plot_in_origin(config, logger)
+
+            self.assertEqual(len(captured_overlay), 1)
+            self.assertEqual(captured_overlay[0]["unit_id"].unique().tolist(), ["SPK_SPKC04a"])
+
     def test_plot_in_origin_no_light_uses_no_full_band_and_placeholders(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_root = Path(tmpdir)

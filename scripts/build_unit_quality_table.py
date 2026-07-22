@@ -47,6 +47,8 @@ MANUAL_PRESERVE_COLUMNS = [
 ]
 
 MISSING_NOTE = "not detected in latest scan"
+FILENAME_CHANNEL_EXCLUSION_REASON = "channel_not_in_pl2_filename"
+UNPARSEABLE_CHANNEL_EXCLUSION_REASON = "channel_unparseable"
 
 
 def _unit_table_cfg(config: dict) -> dict:
@@ -146,6 +148,38 @@ def _default_representative(default_values: dict, unit_id: str) -> str:
 def _format_unit_id(index: int, config: dict) -> str:
     template = _unit_table_cfg(config).get("numbering", {}).get("unit_id_format", "unit{index:02d}")
     return template.format(index=index)
+
+
+def _filename_channel_selection_cfg(config: dict) -> dict:
+    return _unit_table_cfg(config).get("filename_channel_selection", {})
+
+
+def _channels_from_pl2_filename(config: dict, pl2_file: str) -> set[int] | None:
+    selection_cfg = _filename_channel_selection_cfg(config)
+    if not selection_cfg.get("enabled", False):
+        return None
+    match = re.search(r"_(?P<channels>\d+(?:,\d+)*)\.pl2$", Path(pl2_file).name, flags=re.IGNORECASE)
+    if match is None:
+        raise ValueError(
+            f"filename_channel_selection is enabled but channels could not be parsed from PL2 filename: {pl2_file}"
+        )
+    channel_tokens = [token.strip() for token in match.group("channels").split(",")]
+    channels = {int(token) for token in channel_tokens if token}
+    if not channels:
+        raise ValueError(f"No channels were parsed from PL2 filename: {pl2_file}")
+    return channels
+
+
+def _include_from_filename_channel(config: dict, channel: int | None, allowed_channels: set[int] | None) -> tuple[str, str]:
+    defaults = _unit_table_cfg(config).get("default_values", {})
+    if allowed_channels is None:
+        return str(defaults.get("include", "yes")), str(defaults.get("exclusion_reason", ""))
+    selection_cfg = _filename_channel_selection_cfg(config)
+    if channel is None:
+        return "no", str(selection_cfg.get("unparseable_channel_reason", UNPARSEABLE_CHANNEL_EXCLUSION_REASON))
+    if channel in allowed_channels:
+        return "yes", ""
+    return "no", str(selection_cfg.get("exclusion_reason", FILENAME_CHANNEL_EXCLUSION_REASON))
 
 
 def _empty_unit_table() -> pd.DataFrame:
@@ -294,19 +328,22 @@ def build_unit_rows_for_file(
     unit_names: list[str],
 ) -> list[dict]:
     default_values = _unit_table_cfg(config).get("default_values", {})
+    allowed_channels = _channels_from_pl2_filename(config, pl2_file)
     timestamp = _now_str()
     rows: list[dict] = []
     for index, original_name in enumerate(unit_names, start=1):
         unit_id = _format_unit_id(index, config)
+        channel = parse_channel(original_name)
+        include, exclusion_reason = _include_from_filename_channel(config, channel, allowed_channels)
         rows.append(
             {
                 "file_id": file_id,
                 "pl2_file": pl2_file,
                 "unit_id": unit_id,
-                "channel": parse_channel(original_name),
+                "channel": channel,
                 "original_name": original_name,
-                "include": default_values.get("include", "yes"),
-                "exclusion_reason": default_values.get("exclusion_reason", ""),
+                "include": include,
+                "exclusion_reason": exclusion_reason,
                 "representative_unit": _default_representative(default_values, unit_id),
                 "duplicate_of": default_values.get("duplicate_of", ""),
                 "note": default_values.get("note", ""),
@@ -349,6 +386,11 @@ def merge_unit_quality_table(existing_df: pd.DataFrame, scanned_rows: list[dict]
                 "detected_in_latest_scan": "yes",
             }
         )
+        if _filename_channel_selection_cfg(config).get("enabled", False) and _filename_channel_selection_cfg(config).get(
+            "override_manual_include", True
+        ):
+            merged["include"] = new_row["include"]
+            merged["exclusion_reason"] = new_row["exclusion_reason"]
         if not preserve_manual:
             for column in MANUAL_PRESERVE_COLUMNS:
                 merged[column] = new_row[column]
@@ -404,6 +446,8 @@ def build_unit_quality_table(config: dict, logger: PipelineLogger) -> Path:
         per_file_stats[file_id] = {
             "pl2_file": payload["pl2_file"],
             "n_units_detected": len(payload["units"]),
+            "n_units_included": sum(str(row["include"]).strip().lower() == "yes" for row in rows),
+            "n_units_excluded": sum(str(row["include"]).strip().lower() != "yes" for row in rows),
         }
 
     existing_df = _read_existing_unit_table(unit_table_path)
@@ -440,7 +484,9 @@ def build_unit_quality_table(config: dict, logger: PipelineLogger) -> Path:
             stats["pl2_file"],
             str(unit_table_path),
             "success",
-            f"n_units_detected={stats['n_units_detected']}; n_units_added={added_count}; n_units_existing={existing_count}; n_units_missing_from_latest_scan={missing_count}",
+            f"n_units_detected={stats['n_units_detected']}; n_units_included={stats['n_units_included']}; "
+            f"n_units_excluded={stats['n_units_excluded']}; n_units_added={added_count}; "
+            f"n_units_existing={existing_count}; n_units_missing_from_latest_scan={missing_count}",
         )
 
     return unit_table_path
